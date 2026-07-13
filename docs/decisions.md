@@ -145,3 +145,61 @@ Date: 2026-07-13. Status: decided.
   rightly not ours to have. The JWE encryptor in the test helpers is
   written independently of the adapter's decryptor so the two check each
   other.
+
+## D4. U5: the Erica harness, and what it changed
+
+Date: 2026-07-13. Status: decided by running Erica locally
+(gitlab.opencode.de/bmi/eudi-wallet/erica, commit 5bd801f).
+
+Erica ran, natively (Node 22, no Docker), and the full same-device flow
+completes against it: deeplink → request_uri dereference over real HTTPS →
+Erica's HAIP validation → Erica's simulated wallet POSTing a real encrypted
+`direct_post.jwt` → `authenticate()` → Upactor. Setup in
+docs/erica-setup.md; suite in tests/integration/erica.e2e.test.ts; recorded
+validation output in tests/integration/evidence/. What the harness forced
+us to decide:
+
+- **Registry extension: flat `age_over_<threshold>` predicates.** Erica's
+  PID template (the BMI's own model of the sandbox PID) discloses flat
+  `age_over_18`/`age_over_21` booleans, not the EU PID rulebook's nested
+  `age_equal_or_over/<threshold>` sub-claims U1 allow-listed. Both are
+  boolean predicates with identical privacy properties, so both spellings
+  are now declarable (src/attribute-policy.ts). This is the registry
+  extension U1 anticipated "when consumers surface"; Erica is the first
+  consumer. Which spelling the real sandbox PID uses is a September
+  question; the answer retires the loser.
+
+- **Erica's trust anchor is fetched, not committed.** Erica generates its
+  PID-issuer leaf certificate fresh per boot (signed by a stable committed
+  root), so the harness fetches `GET /api/trust-anchor` at suite start and
+  configures the adapter with it, the same move a sandbox RP makes with
+  the published mock trust lists. Nothing Erica-specific is baked into the
+  adapter.
+
+- **Two Erica quirks are accommodated in the harness, not the adapter**
+  (details and code pointers in tests/integration/erica-harness.ts):
+  the KB-JWT audience derivation (Erica reads the JAR `aud` or a camelCase
+  `clientId`, never the snake_case `client_id`, so the simulation call
+  strips `aud` and mirrors `client_id`; the validation call sends the
+  payload exactly as signed), and HAIP validation running on a separate
+  `/api/debug` call from the simulation so neither is compromised.
+
+- **Two Erica bugs are documented, not worked around.** Zero-disclosure
+  presentations come out as `<JWT>~~<KB-JWT>` (an empty disclosure element,
+  malformed per RFC 9901), so the possession-only e2e records the adapter's
+  correct rejection rather than a success; the spec-correct possession-only
+  path stays covered by the unit wallet. And `INVALID_SIGNATURE` mode
+  cannot run at all (Erica's `INVALID_SIGNATURE_KEY` is not a valid P-256
+  key pair, node's crypto rejects it), so tampered issuer signatures stay
+  covered by the unit suite's `tamperIssuerSignature`. Both tests are
+  written to fail loudly if Erica fixes itself, so the assertions get
+  upgraded instead of silently rotting.
+
+- **The adapter runs in production posture.** The harness RP server is
+  HTTPS (self-signed fixture cert, tests/fixtures/rp-tls.pem), so
+  `allowInsecureRequests` stays off and Erica's HAIP profile validation
+  passes with zero errors. Two non-ERROR findings are knowingly accepted
+  and allowlisted by checkId with reasons: the registrar-trust WARNING
+  (our access certificate is a local test cert; only the sandbox registrar
+  can issue a chained one) and the loopback-response_uri WARNING (inherent
+  to a local harness). Anything else failing fails the suite.

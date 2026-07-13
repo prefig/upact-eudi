@@ -1,0 +1,58 @@
+{
+	"recorded_at": "2026-07-13T14:42:17.977Z",
+	"erica_url": "http://127.0.0.1:3009",
+	"erica_commit": "5bd801f",
+	"cases": [
+		{
+			"mode": "EXPIRED",
+			"outcome": "credential_invalid",
+			"wallet_reply_status": 400
+		},
+		{
+			"mode": "NOT_YET_VALID",
+			"outcome": "credential_invalid",
+			"wallet_reply_status": 400
+		},
+		{
+			"mode": "MISSING_SIGNATURE",
+			"outcome": "credential_invalid",
+			"wallet_reply_status": 400
+		},
+		{
+			"mode": "WRONG_NONCE",
+			"outcome": "credential_invalid",
+			"wallet_reply_status": 400
+		},
+		{
+			"mode": "WRONG_AUDIENCE",
+			"outcome": "credential_invalid",
+			"wallet_reply_status": 400
+		},
+		{
+			"mode": "MISSING_HOLDER_BINDING",
+			"outcome": "credential_invalid",
+			"wallet_reply_status": 400
+		},
+		{
+			"mode": "INVALID_SIGNATURE",
+			"outcome": "erica simulation failed (broken INVALID_SIGNATURE_KEY); adapter path unit-covered"
+		},
+		{
+			"mode": "MISSING_CLAIMS",
+			"outcome": "credential_invalid"
+		},
+		{
+			"mode": "OVER_DISCLOSURE",
+			"outcome": "session (over-disclosure dropped)"
+		},
+		{
+			"mode": "VALID",
+			"template": "special-characters",
+			"outcome": "session (no PII surfaced)"
+		},
+		{
+			"mode": "REPLAY",
+			"outcome": "credential_invalid"
+		}
+	]
+}

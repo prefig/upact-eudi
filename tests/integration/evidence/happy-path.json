@@ -1,0 +1,788 @@
+{
+	"recorded_at": "2026-07-13T14:42:17.891Z",
+	"erica_url": "http://127.0.0.1:3009",
+	"erica_commit": "5bd801f",
+	"accepted_check_failures": {
+		"url.request_jwt.x5c_trust_anchor": "test access certificate is not registrar-issued"
+	},
+	"parse_url_checks": [
+		{
+			"checkId": "url.scheme.custom",
+			"checkName": "Custom URI Scheme",
+			"passed": true,
+			"category": "Protocol",
+			"severity": "WARNING",
+			"details": "Uses openid4vp:// custom scheme (typical for deep links and QR codes)"
+		},
+		{
+			"checkId": "url.request_param.present",
+			"checkName": "Request Parameter Present",
+			"passed": true,
+			"category": "Delivery",
+			"severity": "WARNING",
+			"details": "Request by value using request parameter (JWT)"
+		},
+		{
+			"checkId": "url.request_jwt.format",
+			"checkName": "Request JWT Format",
+			"passed": true,
+			"category": "Syntax",
+			"severity": "WARNING",
+			"details": "JWT has correct structure (3 parts)"
+		},
+		{
+			"checkId": "url.request_jwt.header_decode",
+			"checkName": "Request JWT Header Decode",
+			"passed": true,
+			"category": "Syntax",
+			"severity": "WARNING",
+			"details": "JWT header decoded: alg=ES256, typ=oauth-authz-req+jwt"
+		},
+		{
+			"checkId": "url.request_jwt.x5c_present",
+			"checkName": "X.509 Certificate Chain Present",
+			"passed": true,
+			"category": "Security",
+			"severity": "WARNING",
+			"details": "Certificate chain contains 1 certificate(s)"
+		},
+		{
+			"checkId": "url.request_jwt.x5c_decode",
+			"checkName": "Certificate Chain Decode",
+			"passed": true,
+			"category": "Security",
+			"severity": "WARNING",
+			"details": "All certificates successfully decoded"
+		},
+		{
+			"checkId": "url.request_jwt.x5c_cert_0_validity",
+			"checkName": "Certificate 0 Validity Period",
+			"passed": true,
+			"category": "Security",
+			"severity": "WARNING",
+			"details": "Valid from 2026-07-13T13:36:11.000Z to 2046-07-08T13:36:11.000Z"
+		},
+		{
+			"checkId": "url.request_jwt.x5c_cert_0_parse",
+			"checkName": "Certificate 0 Parse",
+			"passed": true,
+			"category": "Security",
+			"severity": "WARNING",
+			"details": "Subject: CN=upact-eudi test access certificate\nO=upact-eudi tests, Issuer: CN=upact-eudi test access certificate\nO=upact-eudi tests"
+		},
+		{
+			"checkId": "url.request_jwt.x5c_trust_anchor",
+			"checkName": "Trust Anchor Validation",
+			"passed": false,
+			"category": "Security",
+			"severity": "WARNING",
+			"issue": "Access Certificate not trusted by any Registrar in trust list",
+			"details": "Access Certificate signature could not be verified against any trusted Registrar",
+			"suggestedFix": "Ensure the RP's Access Certificate is signed by a trusted Registrar"
+		},
+		{
+			"checkId": "url.request_jwt.decode",
+			"checkName": "Request JWT Decode",
+			"passed": true,
+			"category": "Syntax",
+			"severity": "WARNING",
+			"details": "JWT payload successfully decoded"
+		},
+		{
+			"checkId": "semantics.client_id.url_jwt_match",
+			"checkName": "Client ID Consistency",
+			"passed": true,
+			"category": "Semantics",
+			"subcategory": "Client Identification",
+			"severity": "WARNING",
+			"details": "client_id matches between URL (x509_hash:nybrdV1ZJnLXpvV18BqX6j1V-OcePxMdvVtZ7U7BvCM) and JWT payload"
+		},
+		{
+			"checkId": "url.request_jwt.signature",
+			"checkName": "Request JWT Signature Verification",
+			"passed": true,
+			"category": "Security",
+			"severity": "WARNING",
+			"details": "JWT signature verified successfully using public key from x5c certificate"
+		}
+	],
+	"request_validation": {
+		"valid": true,
+		"errors": [],
+		"warnings": [
+			{
+				"category": "SYNTAX_ERROR",
+				"field": "response_uri",
+				"issue": "response_uri uses localhost/private IP: 127.0.0.1",
+				"severity": "WARNING",
+				"suggestedFix": "Use public domain in production"
+			}
+		],
+		"checks": [
+			{
+				"checkId": "syntax.client_id.presence",
+				"checkName": "Client ID Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Required Fields",
+				"field": "client_id",
+				"expectedValue": "Non-empty string",
+				"actualValue": "x509_hash:nybrdV1ZJnLXpvV18BqX6j1V-OcePxMdvVtZ7U7BvCM",
+				"details": "client_id field is present",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.response_type.presence",
+				"checkName": "Response Type Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Required Fields",
+				"field": "response_type",
+				"expectedValue": "vp_token",
+				"actualValue": "vp_token",
+				"details": "response_type field is present",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.response_type.validity",
+				"checkName": "Response Type Validity",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Format Validation",
+				"field": "response_type",
+				"expectedValue": "vp_token",
+				"actualValue": "vp_token",
+				"details": "response_type contains valid value",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.response_uri.presence",
+				"checkName": "Response URI Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Required Fields",
+				"field": "response_uri",
+				"expectedValue": "HTTPS URL",
+				"actualValue": "https://127.0.0.1:44127/oid4vp/response",
+				"details": "response_uri field is present",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.response_uri.https",
+				"checkName": "Response URI HTTPS Enforcement",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Security Validation",
+				"field": "response_uri",
+				"expectedValue": "https://...",
+				"actualValue": "https://127.0.0.1:44127/oid4vp/response",
+				"details": "response_uri uses HTTPS protocol",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.url.response_uri.localhost",
+				"checkName": "response_uri Not Localhost/Private IP",
+				"passed": false,
+				"category": "Syntax",
+				"subcategory": "URL Validation",
+				"field": "response_uri",
+				"expectedValue": "Public domain",
+				"actualValue": "127.0.0.1",
+				"severity": "WARNING",
+				"issue": "response_uri points to localhost or private IP (127.0.0.1)",
+				"suggestedFix": "Use a public domain for production"
+			},
+			{
+				"checkId": "syntax.nonce.presence",
+				"checkName": "Nonce Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Security Validation",
+				"field": "nonce",
+				"expectedValue": "Cryptographically random string",
+				"actualValue": "<43 chars>",
+				"details": "nonce field is present",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.nonce.length",
+				"checkName": "Nonce Cryptographic Strength",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Security Validation",
+				"field": "nonce",
+				"expectedValue": "≥16 characters",
+				"actualValue": "43 characters",
+				"details": "nonce has sufficient length",
+				"severity": "WARNING"
+			},
+			{
+				"checkId": "syntax.query.presence",
+				"checkName": "Credential Query Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Required Fields",
+				"field": "dcql_query",
+				"expectedValue": "dcql_query",
+				"actualValue": "dcql_query present",
+				"details": "Credential query structure is present",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.state.presence",
+				"checkName": "State Parameter Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Security Validation",
+				"field": "state",
+				"expectedValue": "Unique state string",
+				"actualValue": "xOZUb6rJkow2iZOMNBd3BQ",
+				"details": "state parameter is present for CSRF protection",
+				"severity": "WARNING"
+			},
+			{
+				"checkId": "syntax.client_metadata.presence",
+				"checkName": "Client Metadata Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Required Fields",
+				"field": "client_metadata",
+				"expectedValue": "client_metadata object",
+				"actualValue": "Present",
+				"details": "client_metadata field is present",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.client_metadata.jwks",
+				"checkName": "JWKS Encryption Keys Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Security Validation",
+				"field": "client_metadata.jwks",
+				"expectedValue": "JWKS with encryption keys",
+				"actualValue": "JWKS with 1 keys",
+				"details": "Encryption keys are present in JWKS",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.jwt.aud.value",
+				"checkName": "Audience (aud) Value",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "JWT Parameters",
+				"field": "aud",
+				"expectedValue": "https://self-issued.me/v2",
+				"actualValue": "https://self-issued.me/v2",
+				"details": "Audience claim is correctly set for self-issued responses",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "syntax.jwt.iss.presence",
+				"checkName": "Issuer (iss) Presence",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "JWT Parameters",
+				"field": "iss",
+				"expectedValue": "Optional",
+				"actualValue": "undefined",
+				"details": "Issuer claim is optional but recommended for JWT-secured requests",
+				"severity": "WARNING"
+			},
+			{
+				"checkId": "syntax.prohibited.none",
+				"checkName": "No Prohibited Fields",
+				"passed": true,
+				"category": "Syntax",
+				"subcategory": "Prohibited Fields",
+				"field": "request",
+				"expectedValue": "No prohibited fields",
+				"actualValue": "Clean",
+				"details": "Request contains no prohibited fields",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "semantic.dcql.credentials.presence",
+				"checkName": "Credentials Array Presence",
+				"passed": true,
+				"category": "Semantics",
+				"subcategory": "DCQL Structure",
+				"field": "dcql_query.credentials",
+				"expectedValue": "Non-empty array",
+				"actualValue": "Array with 1 credential(s)",
+				"details": "DCQL query contains 1 credential definition(s)",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "semantic.dcql.credentials.unique_ids",
+				"checkName": "Credential ID Uniqueness",
+				"passed": true,
+				"category": "Semantics",
+				"subcategory": "DCQL Structure",
+				"field": "dcql_query.credentials",
+				"expectedValue": "All unique IDs",
+				"actualValue": "All unique",
+				"details": "All credential IDs are unique",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "semantic.credential.0.id",
+				"checkName": "Credential 0 ID Presence",
+				"passed": true,
+				"category": "Semantics",
+				"subcategory": "Credential Definition",
+				"field": "dcql_query.credentials[0].id",
+				"expectedValue": "Non-empty string",
+				"actualValue": "credential_0",
+				"details": "Credential has valid ID: credential_0",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "semantic.credential.0.format.validity",
+				"checkName": "Credential 0 Format Validity",
+				"passed": true,
+				"category": "Semantics",
+				"subcategory": "Credential Definition",
+				"field": "dcql_query.credentials[0].format",
+				"expectedValue": "dc+sd-jwt or mso_mdoc",
+				"actualValue": "dc+sd-jwt",
+				"details": "Credential uses valid PID format: dc+sd-jwt",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "semantic.credential.0.claims.presence",
+				"checkName": "Credential 0 Claims Presence (SD-JWT)",
+				"passed": true,
+				"category": "Semantics",
+				"subcategory": "Credential Definition",
+				"field": "dcql_query.credentials[0].claims",
+				"expectedValue": "Non-empty array",
+				"actualValue": "Array with 1 claim(s)",
+				"details": "Credential specifies 1 claim(s) for selective disclosure",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "semantic.dcql.credential_sets.presence",
+				"checkName": "Credential Sets Presence",
+				"passed": true,
+				"category": "Semantics",
+				"subcategory": "DCQL Structure",
+				"field": "dcql_query.credential_sets",
+				"expectedValue": "Non-empty array (optional but recommended)",
+				"actualValue": "undefined or empty",
+				"details": "credential_sets is optional in DCQL. When absent, all credentials are considered required.",
+				"severity": "WARNING"
+			},
+			{
+				"checkId": "profile.response_mode.direct_post_jwt",
+				"checkName": "Response Mode HAIP Compliance",
+				"passed": true,
+				"category": "Profile",
+				"subcategory": "PID Presentation Requirements",
+				"field": "response_mode",
+				"expectedValue": "direct_post.jwt",
+				"actualValue": "direct_post.jwt",
+				"details": "response_mode is HAIP compliant",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "profile.client_id.x509_hash",
+				"checkName": "Client ID x509_hash Scheme (PID)",
+				"passed": true,
+				"category": "Profile",
+				"subcategory": "PID Presentation Requirements",
+				"field": "client_id",
+				"expectedValue": "x509_hash:<hash>",
+				"actualValue": "x509_hash:nybrdV1ZJnLXpvV18BqX6j1V-OcePxMdvVtZ7U7BvCM",
+				"details": "client_id uses required x509_hash scheme",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "profile.pid.credential.0.vct_values.valid",
+				"checkName": "Credential 0 VCT Values Valid",
+				"passed": true,
+				"category": "Profile",
+				"subcategory": "PID Credential Requirements",
+				"field": "dcql_query.credentials[0].meta.vct_values",
+				"expectedValue": "\"urn:eudi:pid:de:1\"",
+				"actualValue": "urn:eudi:pid:de:1",
+				"details": "Credential type correctly specifies German PID",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "profile.verifier_info.presence",
+				"checkName": "Verifier Info Presence (PID)",
+				"passed": true,
+				"category": "Profile",
+				"subcategory": "PID Presentation Requirements",
+				"field": "verifier_info",
+				"expectedValue": "verifier_info object",
+				"actualValue": "Present",
+				"details": "Verifier information is present for RP identification",
+				"severity": "WARNING"
+			},
+			{
+				"checkId": "profile.vp_formats.sd_jwt",
+				"checkName": "VP Formats Support (PID)",
+				"passed": true,
+				"category": "Profile",
+				"subcategory": "PID Presentation Requirements",
+				"field": "client_metadata.vp_formats_supported",
+				"expectedValue": "\"dc+sd-jwt\" or \"mso_mdoc\"",
+				"actualValue": "SD-JWT ",
+				"details": "Required PID formats are supported",
+				"severity": "ERROR"
+			},
+			{
+				"checkId": "profile.aud.presence",
+				"checkName": "Audience (aud) Presence (PID)",
+				"passed": true,
+				"category": "Profile",
+				"subcategory": "PID Presentation Requirements",
+				"field": "aud",
+				"expectedValue": "aud claim",
+				"actualValue": "https://self-issued.me/v2",
+				"details": "Audience is present for key binding",
+				"severity": "WARNING"
+			}
+		],
+		"summary": {
+			"totalChecks": 27,
+			"passedChecks": 26,
+			"failedChecks": 1,
+			"errorCount": 0,
+			"warningCount": 1,
+			"compliancePercentage": 96,
+			"checksByCategory": [
+				{
+					"category": "Syntax",
+					"total": 15,
+					"passed": 14,
+					"failed": 1
+				},
+				{
+					"category": "Semantics",
+					"total": 6,
+					"passed": 6,
+					"failed": 0
+				},
+				{
+					"category": "Profile",
+					"total": 6,
+					"passed": 6,
+					"failed": 0
+				}
+			]
+		}
+	},
+	"response_validation": {
+		"valid": true,
+		"errors": [],
+		"warnings": [],
+		"checks": [
+			{
+				"checkId": "structure.vp_token.presence",
+				"checkName": "VP Token Presence",
+				"passed": true,
+				"category": "Structure",
+				"severity": "ERROR",
+				"subcategory": "Required Fields",
+				"field": "vp_token",
+				"expectedValue": "Non-empty string or array",
+				"actualValue": "present",
+				"specReference": {
+					"spec": "OpenID4VP-HAIP",
+					"section": "6.1",
+					"url": "https://openid.net/specs/openid-4-verifiable-presentations-1_0.html"
+				}
+			},
+			{
+				"checkId": "structure.vp_token.format",
+				"checkName": "VP Token Format",
+				"passed": true,
+				"category": "Structure",
+				"severity": "ERROR",
+				"subcategory": "Required Fields",
+				"field": "vp_token",
+				"expectedValue": "Object with credential IDs as keys (e.g., { \"pid-sd-jwt\": [\"eyJ...\"], \"pid-mso-mdoc\": [...] })",
+				"actualValue": "object with 1 key(s)",
+				"specReference": {
+					"spec": "OpenID4VP-HAIP",
+					"section": "6.1",
+					"url": "https://openid.net/specs/openid-4-verifiable-presentations-1_0.html"
+				}
+			},
+			{
+				"checkId": "vp_token.decoding",
+				"checkName": "VP Token Decoding",
+				"passed": true,
+				"category": "VP Token",
+				"severity": "ERROR",
+				"subcategory": "JWT Structure",
+				"expectedValue": "1 decoded token(s)",
+				"actualValue": "1 decoded token(s)"
+			},
+			{
+				"checkId": "vp_token[0].algorithm",
+				"checkName": "Token 1: Algorithm",
+				"passed": true,
+				"category": "VP Token",
+				"severity": "WARNING",
+				"subcategory": "Cryptography",
+				"field": "vp_token[0].algorithm",
+				"expectedValue": "ES256, ES384, ES512, EdDSA",
+				"actualValue": "ES256"
+			},
+			{
+				"checkId": "vp_token[0].issuer",
+				"checkName": "Token 1: Issuer",
+				"passed": true,
+				"category": "VP Token",
+				"severity": "ERROR",
+				"subcategory": "JWT Claims",
+				"field": "vp_token[0].iss",
+				"expectedValue": "Non-empty string",
+				"actualValue": "present"
+			},
+			{
+				"checkId": "vp_token[0].credential_type",
+				"checkName": "Token 1: Credential Type",
+				"passed": true,
+				"category": "VP Token",
+				"severity": "WARNING",
+				"subcategory": "JWT Claims",
+				"field": "vp_token[0].vct",
+				"expectedValue": "Credential type specified",
+				"actualValue": "urn:eudi:pid:de:1",
+				"details": "Type: urn:eudi:pid:de:1"
+			},
+			{
+				"checkId": "vp_token[0].disclosures",
+				"checkName": "Token 1: Selective Disclosures",
+				"passed": true,
+				"category": "VP Token",
+				"severity": "WARNING",
+				"subcategory": "SD-JWT",
+				"field": "vp_token[0].disclosures",
+				"expectedValue": "At least one disclosure",
+				"actualValue": "1 disclosure(s)",
+				"details": "Found 1 disclosed claims"
+			},
+			{
+				"checkId": "vp_token[0].kb_jwt.presence",
+				"checkName": "Token 1: KB-JWT Presence",
+				"passed": true,
+				"category": "Holder Binding",
+				"severity": "ERROR",
+				"subcategory": "Key Binding",
+				"field": "vp_token[0].kb-jwt",
+				"expectedValue": "Key Binding JWT present",
+				"actualValue": "present"
+			},
+			{
+				"checkId": "vp_token[0].kb_jwt.nonce",
+				"checkName": "Token 1: Nonce Match",
+				"passed": true,
+				"category": "Holder Binding",
+				"severity": "ERROR",
+				"subcategory": "Replay Protection",
+				"field": "vp_token[0].kb-jwt.nonce",
+				"expectedValue": "1UMk75A6fAKZ2gIodQ8xrp1DldUGSg_w4B3JceeR6g4",
+				"actualValue": "1UMk75A6fAKZ2gIodQ8xrp1DldUGSg_w4B3JceeR6g4"
+			},
+			{
+				"checkId": "vp_token[0].kb_jwt.audience",
+				"checkName": "Token 1: Audience Match",
+				"passed": true,
+				"category": "Holder Binding",
+				"severity": "ERROR",
+				"subcategory": "Replay Protection",
+				"field": "vp_token[0].kb-jwt.aud",
+				"expectedValue": "x509_hash:nybrdV1ZJnLXpvV18BqX6j1V-OcePxMdvVtZ7U7BvCM",
+				"actualValue": "x509_hash:nybrdV1ZJnLXpvV18BqX6j1V-OcePxMdvVtZ7U7BvCM"
+			},
+			{
+				"checkId": "vp_token[0].disclosures.presence",
+				"checkName": "Token 1: Disclosures Present",
+				"passed": true,
+				"category": "Cryptographic Verification",
+				"severity": "WARNING",
+				"subcategory": "SD-JWT",
+				"field": "vp_token[0].disclosures",
+				"expectedValue": "At least one disclosure",
+				"actualValue": "1 disclosure(s)"
+			},
+			{
+				"checkId": "vp_token[0].disclosures.verification",
+				"checkName": "Token 1: Disclosure Hash Verification",
+				"passed": true,
+				"category": "Cryptographic Verification",
+				"severity": "WARNING",
+				"subcategory": "SD-JWT",
+				"field": "vp_token[0].disclosures",
+				"expectedValue": "All disclosure hashes match _sd array",
+				"actualValue": "1/1 valid",
+				"details": "Hash algorithm: sha-256, _sd array contains 1 hash(es)"
+			},
+			{
+				"checkId": "vp_token[0].main_jwt_signature",
+				"checkName": "Token 1: Main JWT Signature",
+				"passed": true,
+				"category": "Cryptographic Verification",
+				"severity": "ERROR",
+				"subcategory": "Issuer Signature",
+				"field": "vp_token[0].signature",
+				"expectedValue": "Valid ECDSA signature from issuer",
+				"actualValue": "Valid signature",
+				"specReference": {
+					"spec": "SD-JWT-VC",
+					"section": "5.2",
+					"url": "https://datatracker.ietf.org/doc/html/draft-ietf-oauth-sd-jwt-vc"
+				}
+			},
+			{
+				"checkId": "vp_token[0].kb_jwt_signature",
+				"checkName": "Token 1: KB-JWT Signature",
+				"passed": true,
+				"category": "Cryptographic Verification",
+				"severity": "ERROR",
+				"subcategory": "Holder Signature",
+				"field": "vp_token[0].kb-jwt.signature",
+				"expectedValue": "Valid ECDSA signature from holder",
+				"actualValue": "Valid signature",
+				"specReference": {
+					"spec": "SD-JWT-VC",
+					"section": "5.3",
+					"url": "https://datatracker.ietf.org/doc/html/draft-ietf-oauth-sd-jwt-vc"
+				}
+			},
+			{
+				"checkId": "claims.credentials.presence",
+				"checkName": "Credentials Returned",
+				"passed": true,
+				"category": "Claims",
+				"severity": "ERROR",
+				"subcategory": "Response Completeness",
+				"expectedValue": "At least one credential",
+				"actualValue": "1 credential(s)"
+			},
+			{
+				"checkId": "claims.token[0].payload",
+				"checkName": "Token 1: Payload Present",
+				"passed": true,
+				"category": "Claims",
+				"severity": "ERROR",
+				"subcategory": "Credential Content",
+				"field": "vp_token[0].payload",
+				"expectedValue": "JWT payload with claims",
+				"actualValue": "present"
+			},
+			{
+				"checkId": "vp_token[0].claims.completeness",
+				"checkName": "Token 1: All Requested Claims Present",
+				"passed": true,
+				"category": "Claims",
+				"severity": "ERROR",
+				"subcategory": "Claim Completeness",
+				"field": "vp_token[0]",
+				"expectedValue": "Claims: age_over_18",
+				"actualValue": "Disclosed: age_over_18, cnf"
+			},
+			{
+				"checkId": "vp_token[0].claims.minimal_disclosure",
+				"checkName": "Token 1: Minimal Disclosure (No Extra Claims)",
+				"passed": true,
+				"category": "Claims",
+				"severity": "WARNING",
+				"subcategory": "Privacy",
+				"field": "vp_token[0]",
+				"expectedValue": "Only requested claims",
+				"actualValue": "Minimal disclosure"
+			},
+			{
+				"checkId": "vp_token[0].expiration",
+				"checkName": "Token 1: Not Expired",
+				"passed": true,
+				"category": "Timing",
+				"severity": "ERROR",
+				"subcategory": "Validity Period",
+				"field": "vp_token[0].exp",
+				"expectedValue": "Future date (after 2026-07-13T14:42:17.000Z)",
+				"actualValue": "2036-07-10T14:42:17.000Z"
+			},
+			{
+				"checkId": "vp_token[0].not_before",
+				"checkName": "Token 1: Already Valid",
+				"passed": true,
+				"category": "Timing",
+				"severity": "ERROR",
+				"subcategory": "Validity Period",
+				"field": "vp_token[0].nbf",
+				"expectedValue": "Past date (before 2026-07-13T14:42:17.000Z)",
+				"actualValue": "2026-07-13T14:42:17.000Z"
+			},
+			{
+				"checkId": "vp_token[0].issued_at",
+				"checkName": "Token 1: Reasonable Issue Time",
+				"passed": true,
+				"category": "Timing",
+				"severity": "WARNING",
+				"subcategory": "Validity Period",
+				"field": "vp_token[0].iat",
+				"expectedValue": "Within reasonable timeframe",
+				"actualValue": "2026-07-13T14:42:17.000Z",
+				"details": "Issued: 2026-07-13T14:42:17.000Z"
+			}
+		],
+		"summary": {
+			"totalChecks": 21,
+			"passedChecks": 21,
+			"failedChecks": 0,
+			"errorCount": 0,
+			"warningCount": 0,
+			"compliancePercentage": 100,
+			"checksByCategory": [
+				{
+					"category": "Structure",
+					"total": 2,
+					"passed": 2,
+					"failed": 0
+				},
+				{
+					"category": "VP Token",
+					"total": 5,
+					"passed": 5,
+					"failed": 0
+				},
+				{
+					"category": "Holder Binding",
+					"total": 3,
+					"passed": 3,
+					"failed": 0
+				},
+				{
+					"category": "Cryptographic Verification",
+					"total": 4,
+					"passed": 4,
+					"failed": 0
+				},
+				{
+					"category": "Claims",
+					"total": 4,
+					"passed": 4,
+					"failed": 0
+				},
+				{
+					"category": "Timing",
+					"total": 3,
+					"passed": 3,
+					"failed": 0
+				}
+			]
+		}
+	},
+	"post_result": {
+		"success": true,
+		"statusCode": 200
+	},
+	"outcome": "session"
+}

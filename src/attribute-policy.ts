@@ -57,14 +57,18 @@ const FORBIDDEN_CLAIMS: ReadonlyMap<string, string> = new Map([
 /**
  * Claim paths a relying party may declare, beyond possession-only.
  * Boolean predicates only: they surface as capability-style booleans, never
- * as PII (plan decision 4; upact SPEC §7). Thresholds follow the EU PID
- * rulebook's `age_equal_or_over` sub-claims.
+ * as PII (plan decision 4; upact SPEC §7). Two spellings of the same
+ * predicate family are declarable: the EU PID rulebook's nested
+ * `age_equal_or_over/<threshold>` sub-claims, and the flat
+ * `age_over_<threshold>` form the BMI Erica simulator's PID template
+ * discloses (the vocabulary the U5 end-to-end harness meets in practice).
  */
-export const ALLOWED_CLAIM_PATHS: readonly ClaimPath[] = Object.freeze(
-	['12', '14', '16', '18', '21', '65'].map((threshold) =>
-		Object.freeze(['age_equal_or_over', threshold]),
-	),
-);
+const AGE_THRESHOLDS: readonly string[] = ['12', '14', '16', '18', '21', '65'];
+
+export const ALLOWED_CLAIM_PATHS: readonly ClaimPath[] = Object.freeze([
+	...AGE_THRESHOLDS.map((threshold) => Object.freeze(['age_equal_or_over', threshold])),
+	...AGE_THRESHOLDS.map((threshold) => Object.freeze([`age_over_${threshold}`])),
+]);
 
 /**
  * The validated, deep-frozen attribute policy. Everything downstream (the

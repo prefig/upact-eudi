@@ -73,6 +73,25 @@ describe('freezeAttributePolicy — declaration validation', () => {
 		expect(() => freezeAttributePolicy(config)).not.toThrow();
 	});
 
+	it('accepts the flat age_over_18 spelling (the Erica/BMI PID template vocabulary, D4)', () => {
+		const config = makeConfig({
+			declaredAttributes: [
+				{ format: 'dc+sd-jwt', vct: 'urn:eudi:pid:de:1', claims: [['age_over_18'], ['age_over_21']] },
+			],
+		});
+		expect(() => freezeAttributePolicy(config)).not.toThrow();
+	});
+
+	it('rejects a flat age predicate with a threshold outside the registry', () => {
+		const config = makeConfig({
+			declaredAttributes: [
+				{ format: 'dc+sd-jwt', vct: 'urn:eudi:pid:de:1', claims: [['age_over_17']] },
+			],
+		});
+		expect(() => freezeAttributePolicy(config)).toThrow(/age_over_17/);
+		expect(() => freezeAttributePolicy(config)).toThrow(/allow-list/i);
+	});
+
 	it('throws on an empty declaration (no credentials)', () => {
 		const config = makeConfig({ declaredAttributes: [] });
 		expect(() => freezeAttributePolicy(config)).toThrow(/declares no credentials/i);

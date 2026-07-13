@@ -63,6 +63,26 @@ openssl req -new -x509 -key untrusted-issuer.key.pem \
   -days 7300 -sha256 -out untrusted-issuer.pem
 ```
 
+## Erica harness TLS (U5)
+
+- `rp-tls.pem` / `rp-tls.key.pem` — self-signed TLS certificate
+  (SAN `IP:127.0.0.1, DNS:localhost`) for the integration harness's local
+  relying-party HTTPS server (docs/erica-setup.md). HAIP requires HTTPS
+  endpoints; Erica accepts the self-signed cert only when started with
+  `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+
+Regenerate with:
+
+```sh
+openssl ecparam -name prime256v1 -genkey -noout \
+  | openssl pkcs8 -topk8 -nocrypt -out rp-tls.key.pem
+openssl req -new -x509 -key rp-tls.key.pem \
+  -subj "/CN=upact-eudi e2e harness TLS (localhost only)/O=upact-eudi tests" \
+  -days 7300 -sha256 \
+  -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" \
+  -out rp-tls.pem
+```
+
 ## BMI mock trust list
 
 - `bmi-pid-provider.trustlist.jwt` — the published PID-provider mock trust
