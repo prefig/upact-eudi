@@ -1,7 +1,7 @@
 {
 	"name": "@prefig/upact-eudi",
 	"version": "0.1.0",
-	"description": "EUDI wallet relying-party adapter for upact — OpenID4VP 1.0 / HAIP verifier with the declared-attribute list (CIR (EU) 2025/848) enforced at construction.",
+	"description": "EUDI wallet relying-party adapter for upact: OpenID4VP 1.0 / HAIP verifier with the declared-attribute list (CIR (EU) 2025/848) enforced at construction.",
 	"license": "Apache-2.0",
 	"type": "module",
 	"main": "./dist/index.js",
