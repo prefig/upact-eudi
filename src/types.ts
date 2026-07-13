@@ -118,6 +118,20 @@ export interface EudiConfig {
 	 * Production deployments MUST NOT set this.
 	 */
 	allowInsecureRequests?: boolean;
+	/**
+	 * Relax the RFC 5280 CA path constraint (basicConstraints CA:TRUE) on
+	 * certificates that issue other certificates in the issuer chain. Test
+	 * wallet simulators (BMI Erica's "DO NOT USE IN PRODUCTION" PID chain)
+	 * sign the credential leaf with an issuer certificate that omits CA:TRUE,
+	 * which strict validation correctly rejects. Set this only against such
+	 * test issuers. Independent of `allowInsecureRequests` on purpose: the
+	 * integration harness runs real HTTPS but against test certificates.
+	 * Production deployments MUST NOT set this; the real German PID issuer's
+	 * certificate shape is confirmed against the sandbox, not assumed. When
+	 * set, the forged-sub-chain protection is also down, so this is a
+	 * dev/test escape hatch only.
+	 */
+	allowTestIssuerCertificates?: boolean;
 }
 
 /**

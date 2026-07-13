@@ -180,6 +180,9 @@ export async function startRpServer(
 		accessCertificateKey: ACCESS_CERTIFICATE_KEY,
 		registrationCertificate: REGISTRATION_JWT,
 		endpoints: { baseUrl },
+		// Erica's "DO NOT USE IN PRODUCTION" PID issuer omits CA:TRUE; the
+		// harness runs real HTTPS but against these test certificates.
+		allowTestIssuerCertificates: true,
 		...configOverrides,
 	});
 

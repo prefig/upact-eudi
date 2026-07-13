@@ -476,6 +476,47 @@ describe('issuer trust chain', () => {
 		);
 		expect(error.message).toMatch(/CA certificate|keyCertSign/);
 	});
+
+	it('allowInsecureRequests alone does NOT relax the CA:TRUE constraint', async () => {
+		// URL-scheme leniency and cert-chain leniency are independent. A dev
+		// server on http:// must still reject a non-CA issuer chain unless the
+		// dedicated test-issuer flag is also set.
+		const adapter = makeAdapter({ allowInsecureRequests: true });
+		const { request } = await runWallet(adapter, {
+			issue: {
+				issuerKeyPem: FORGED_SUBISSUER_KEY_PEM,
+				x5c: [pemBodyBase64(FORGED_SUBISSUER_CERT_PEM), pemBodyBase64(PID_ISSUER_CERT_PEM)],
+			},
+		});
+		const error = expectError(
+			await adapter.authenticate({ kind: 'eudi-response', request }),
+			'credential_rejected',
+		);
+		expect(error.message).toMatch(/CA certificate|keyCertSign/);
+	});
+
+	it('allowTestIssuerCertificates relaxes the CA:TRUE constraint (dev/test posture)', async () => {
+		// Test wallet simulators (BMI Erica) sign the credential with an issuer
+		// certificate that omits basicConstraints CA:TRUE, structurally the same
+		// shape as the forged sub-chain above. Under the dedicated flag the CA
+		// gate is a no-op, which unblocks local Erica testing. This deliberately
+		// also lets the forged sub-chain through: it is a dev/test escape hatch
+		// that MUST NOT be set in production. The strict test above is the
+		// production guarantee; this pins that the escape hatch is gated.
+		const adapter = makeAdapter({ allowTestIssuerCertificates: true });
+		const { request } = await runWallet(adapter, {
+			issue: {
+				issuerKeyPem: FORGED_SUBISSUER_KEY_PEM,
+				x5c: [pemBodyBase64(FORGED_SUBISSUER_CERT_PEM), pemBodyBase64(PID_ISSUER_CERT_PEM)],
+			},
+		});
+		const outcome = await adapter.authenticate({ kind: 'eudi-response', request });
+		// The CA-certificate rejection must no longer fire; any remaining outcome
+		// is downstream of chain validation, proving the gate relaxed.
+		if (isAuthError(outcome)) {
+			expect(outcome.message).not.toMatch(/CA certificate|keyCertSign/);
+		}
+	});
 });
 
 // ——— Token status list ———————————————————————————————————————————————————————

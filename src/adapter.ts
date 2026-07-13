@@ -157,6 +157,7 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 				registrationCertificate,
 				trustAnchors,
 				allowInsecureUrls: allowInsecure,
+				allowTestIssuerCertificates: config.allowTestIssuerCertificates === true,
 			});
 			const upactor = mapPresentationsToUpactor(presentations);
 

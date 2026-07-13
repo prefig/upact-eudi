@@ -86,6 +86,25 @@ ERICA_RECORD_EVIDENCE=1 ERICA_COMMIT=$(git -C ../erica rev-parse --short HEAD) n
   signing keys are not published, so only a sandbox-issued access
   certificate can clear it. The suite allowlists exactly this finding.
 
+## The CA:TRUE relaxation flag
+
+Erica's simulated PID is signed by a "Test PID Issuer (DO NOT USE IN
+PRODUCTION)" certificate that omits `basicConstraints CA:TRUE`, even though
+it issues the credential-signing leaf below it. Strict RFC 5280 path
+validation (the production default) rejects such a chain, which is correct:
+without it, any end-entity certificate a trust anchor ever issued could be
+used to mint a rogue issuer.
+
+The adapter therefore exposes `allowTestIssuerCertificates`, which relaxes
+only the CA:TRUE constraint and only for this test posture. It is
+independent of `allowInsecureRequests` (URL scheme) on purpose: the
+integration harness runs real HTTPS but against test certificates, so it
+sets `allowTestIssuerCertificates: true` and leaves URLs strict. Production
+deployments MUST NOT set either flag. Whether the real German sandbox PID
+issuer sets CA:TRUE is a question for sandbox testing; until then this flag
+is the boundary between "works against the simulator" and "trusted in
+production".
+
 ## Known Erica limitations the suite documents
 
 These are asserted as-is, with comments in the tests; if Erica fixes them

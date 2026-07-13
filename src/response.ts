@@ -216,9 +216,22 @@ function decodeJwsHeader(data: string, context: string): JwsParts {
  * end-entity certificate a trust anchor ever issued (e.g. a leaf issued for
  * a different purpose) could be used as an intermediate to sign a forged
  * sub-chain and mint arbitrary issuers.
+ *
+ * `relax` (dev/test posture only, gated on the adapter's allowInsecure flag)
+ * downgrades a missing CA:TRUE to a no-op. This exists because test wallet
+ * simulators (BMI Erica's "DO NOT USE IN PRODUCTION" PID chain) sign the
+ * credential leaf with an issuer certificate that omits basicConstraints
+ * CA:TRUE. Never relax in production: the real German PID issuer's cert
+ * shape is confirmed against the sandbox, not assumed. The keyUsage check
+ * still applies even when relaxed, since a present keyUsage that forbids
+ * keyCertSign is an explicit signal rather than an omission.
  */
-function assertMayIssueCertificates(issuer: X509Certificate, role: string): void {
-	if (issuer.ca !== true) {
+function assertMayIssueCertificates(
+	issuer: X509Certificate,
+	role: string,
+	relax = false,
+): void {
+	if (issuer.ca !== true && !relax) {
 		throw new TrustChainError(
 			`upact-eudi: ${role} '${issuer.subject}' is not a CA certificate ` +
 				`(basicConstraints CA:TRUE is required to sign a certificate in the chain)`,
@@ -260,6 +273,7 @@ function assertMayIssueCertificates(issuer: X509Certificate, role: string): void
  */
 export function createTrustChainVerifier(
 	anchors: readonly X509Certificate[],
+	relaxCaConstraints = false,
 ): (data: string, sig: string) => boolean {
 	return (data: string, sig: string): boolean => {
 		const { header } = decodeJwsHeader(data, 'issuer JWT');
@@ -301,7 +315,7 @@ export function createTrustChainVerifier(
 		for (let i = 0; i < chain.length - 1; i++) {
 			// chain[i+1] is the issuer of chain[i]; it must be a CA permitted to
 			// sign certificates, not merely a certificate whose key verifies.
-			assertMayIssueCertificates(chain[i + 1], `issuer chain link ${i + 1}`);
+			assertMayIssueCertificates(chain[i + 1], `issuer chain link ${i + 1}`, relaxCaConstraints);
 			if (!chain[i].verify(chain[i + 1].publicKey)) {
 				throw new TrustChainError(
 					`upact-eudi: issuer chain link ${i} is not signed by its successor certificate`,
@@ -313,7 +327,7 @@ export function createTrustChainVerifier(
 			if (last.raw.equals(anchor.raw)) return true;
 			if (last.issuer !== anchor.subject || !last.verify(anchor.publicKey)) return false;
 			// The anchor issued `last`; it must itself be a CA permitted to sign.
-			assertMayIssueCertificates(anchor, 'configured trust anchor');
+			assertMayIssueCertificates(anchor, 'configured trust anchor', relaxCaConstraints);
 			return true;
 		});
 		if (!terminates) {
@@ -605,6 +619,11 @@ export interface VerifyDirectPostOptions {
 	/** Parsed trust anchors (parseTrustAnchors at construction). */
 	readonly trustAnchors: readonly X509Certificate[];
 	readonly allowInsecureUrls?: boolean;
+	/**
+	 * Relax the CA:TRUE path constraint for test issuer certificates. See
+	 * EudiConfig.allowTestIssuerCertificates. Dev/test posture only.
+	 */
+	readonly allowTestIssuerCertificates?: boolean;
 	/** Status-list fetch override (tests). Defaults to global fetch. */
 	readonly fetch?: typeof fetch;
 	/** Clock override (tests). Defaults to Date.now. */
@@ -695,7 +714,12 @@ export async function verifyDirectPostResponse(
 	}
 
 	// — Per-declaration SD-JWT VC verification ———————————————————————————————
-	const chainVerifier = createTrustChainVerifier(options.trustAnchors);
+	// CA path constraints relax only for test issuer certificates, never in
+	// production. Independent of URL scheme. See assertMayIssueCertificates.
+	const chainVerifier = createTrustChainVerifier(
+		options.trustAnchors,
+		options.allowTestIssuerCertificates === true,
+	);
 	const sdJwtVc = new SDJwtVcInstance({
 		hasher: (data, alg) =>
 			createHash(alg.replace(/-/g, '').toLowerCase())
