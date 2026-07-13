@@ -90,3 +90,58 @@ https-only URL validation via its module-global config for the duration of
 one build call (set, await, restore). A concurrently-building secure
 instance in the same process could theoretically observe the relaxed window;
 acceptable for a flag documented as local-development-only.
+
+## D3. U3: response-side shape
+
+Date: 2026-07-13. Status: decided.
+
+- **Transaction lookup by JWE `kid`.** The wallet's `direct_post.jwt` JWE
+  names the encryption key it used; ours is `enc-<transaction id>` from
+  `client_metadata.jwks`. A response without that kid cannot be matched to
+  a transaction and is `credential_invalid`. There is no try-all-keys
+  fallback: HAIP wallets echo the kid, and trying every live transaction's
+  key would turn the store into a decryption oracle.
+- **Single-use both ways.** `takeForResponse` requires the request object
+  to have been dereferenced first (a wallet that never fetched the request
+  cannot know the nonce) and deletes the transaction, so a replayed
+  response finds nothing and normalises to `credential_invalid`, matching
+  the plan's replay scenario.
+- **The KB-JWT checks the library does not do are ours.** The wrapped
+  verifier checks nonce and sd_hash but only the *presence* of `aud` and
+  `iat`; the adapter additionally requires `aud` to equal the verifier's
+  `x509_hash:` client_id and `iat` to fall inside a freshness window
+  (`KB_JWT_MAX_AGE_SECONDS` past, `KB_JWT_IAT_SKEW_SECONDS` future).
+- **Interim `Upactor.id`: per-presentation.** Derived from
+  sha256(substrate, issuer, KB-JWT sd_hash), 32 hex chars. German PIDs
+  disclose no stable identifier by default, so this build promises no
+  cross-session stability: equal ids mean the same presentation. U4 decides
+  the real stability semantics with sandbox presentations in hand; the
+  claims mapper is the only file that changes.
+- **Predicates stay off the port surface for now.** Declared boolean
+  predicates (age_equal_or_over/18) are verified — present and boolean, or
+  `credential_invalid` — but not mapped onto the Upactor; how they surface
+  is U4's decision (plan decision 4). Over-disclosed claims are dropped
+  before mapping (plan KTD3); the mapper's input type cannot even carry
+  them.
+- **Session binding via single-use response codes.** `authenticate` returns
+  an opaque Session (createSession, SPEC §7.4) holding the wallet-follow
+  `redirect_uri` (`<baseUrl><finishPath>?response_code=...`).
+  `respondToWallet(outcome)` builds the wallet-facing HTTP response;
+  `redeemResponseCode(code)` gives the application the Upactor exactly once
+  at the finish path, per the developer guide's session-binding
+  requirement. `invalidate` revokes an unredeemed code. The adapter carries
+  no browser-session machinery beyond that; `currentUpactor` stays null and
+  the application owns its session from redemption onward.
+- **Status-list unavailability is `substrate_unavailable`.** The plan's
+  "trust-list endpoint down" scenario: trust anchors themselves are static
+  config (no fetch to fail), so the network dependency that can be down at
+  verification time is the token status list endpoint. Unreachable/non-2xx
+  → `substrate_unavailable`, 429 → `rate_limited`, revoked →
+  `credential_rejected` via a typed error, not message matching.
+- **Fixtures.** The BMI-published mock trust list was fetchable and is
+  committed as a fixture (provenance in tests/fixtures/README.md); it
+  anchors a negative test. Positive chains are locally generated test
+  certificates labelled as such, because the sandbox issuer keys are
+  rightly not ours to have. The JWE encryptor in the test helpers is
+  written independently of the adapter's decryptor so the two check each
+  other.

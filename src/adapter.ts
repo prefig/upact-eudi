@@ -8,14 +8,18 @@
  * (SPEC §7.5). Out-of-port extensions are typed as EudiAdapterExtensions;
  * consumers that only depend on the port interface stay substrate-agnostic.
  *
- * U2 state: the authorization request side is live (deeplink + request_uri
- * dereference handler). The response side (authenticate, claims mapping)
- * lands in U3.
+ * Both protocol sides are live: the authorization request side (deeplink +
+ * request_uri dereference handler, U2) and the response side (authenticate
+ * over the wallet's direct_post.jwt, claims mapping, wallet-follow
+ * redirect_uri with single-use response codes for session binding, U3).
  */
 
 import { randomBytes } from 'node:crypto';
 import type { AuthError, IdentityPort, Session, Upactor } from '@prefig/upact';
+import { createSession } from '@prefig/upact';
+import { _unwrapSession } from '@prefig/upact/internal';
 import { freezeAttributePolicy } from './attribute-policy.js';
+import { mapPresentationsToUpactor } from './claims-mapper.js';
 import {
 	buildDcqlQuery,
 	buildRequestObjectJwt,
@@ -25,6 +29,7 @@ import {
 	signTransactionRef,
 	verifyTransactionRef,
 } from './request.js';
+import { normaliseEudiError, parseTrustAnchors, verifyDirectPostResponse } from './response.js';
 import type { EudiConfig, EudiCredential } from './types.js';
 
 /** Out-of-port methods specific to the EUDI adapter. */
@@ -47,10 +52,37 @@ export interface EudiAdapterExtensions {
 	 * signed request per OpenID4VP 1.0).
 	 */
 	handleRequestUri(request: Request): Promise<Response>;
+	/**
+	 * Builds the HTTP response the application returns to the wallet's
+	 * `direct_post.jwt` POST, from the outcome of `authenticate()`. On
+	 * success it carries the wallet-follow `redirect_uri` (the configured
+	 * finish path with a single-use `response_code`) per the developer
+	 * guide's session-binding requirement; on failure, an OAuth-style error
+	 * body with a status the outcome's port error code warrants.
+	 */
+	respondToWallet(outcome: Session | AuthError): Response;
+	/**
+	 * Redeems the single-use `response_code` the wallet-followed browser
+	 * arrives with at the finish path, binding the browser session to the
+	 * verified presentation. Returns the Upactor once; null for unknown,
+	 * expired, replayed, or invalidated codes.
+	 */
+	redeemResponseCode(responseCode: string): Promise<Upactor | null>;
 }
 
 const DEFAULT_REQUEST_PATH = '/request';
 const DEFAULT_RESPONSE_PATH = '/response';
+const DEFAULT_FINISH_PATH = '/finish';
+
+/** Lifetime of a wallet-follow response code (seconds). */
+export const RESPONSE_CODE_TTL_SECONDS: number = 5 * 60;
+
+/** What a Session opaquely holds (recovered only via _unwrapSession). */
+interface EudiSessionData {
+	upactor: Upactor;
+	redirectUri: string;
+	responseCode: string;
+}
 
 /**
  * Creates an upact IdentityPort backed by an EUDI wallet (OpenID4VP 1.0 /
@@ -79,6 +111,9 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 	const cert = loadAccessCertificate(config.accessCertificate, config.accessCertificateKey);
 	const registrationCertificate = config.registrationCertificate;
 	const allowInsecure = config.allowInsecureRequests === true;
+	// Parsed once at construction; an unparseable anchor throws here,
+	// before any network activity.
+	const trustAnchors = parseTrustAnchors(config.trustAnchors);
 
 	// The DCQL query is derived once, from the frozen policy and nothing
 	// else. No later caller input can widen it.
@@ -86,6 +121,7 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 
 	const requestUriBase = joinPath(baseUrl, config.endpoints.requestPath ?? DEFAULT_REQUEST_PATH);
 	const responseUri = joinPath(baseUrl, config.endpoints.responsePath ?? DEFAULT_RESPONSE_PATH);
+	const finishUri = joinPath(baseUrl, config.endpoints.finishPath ?? DEFAULT_FINISH_PATH);
 
 	// Per-transaction nonce/state, single-use, short-lived. The reference
 	// key is instance-local: a transaction is bound to the adapter instance
@@ -93,25 +129,65 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 	const transactionKey = randomBytes(32);
 	const transactions = createTransactionStore();
 
+	// Wallet-follow response codes: single-use, short-lived, holding only
+	// the mapped Upactor (never substrate material). Swept on access.
+	const responseCodes = new Map<string, { upactor: Upactor; expiresAt: number }>();
+
+	function sweepResponseCodes(): void {
+		const now = Math.floor(Date.now() / 1000);
+		for (const [code, entry] of responseCodes) {
+			if (entry.expiresAt <= now) responseCodes.delete(code);
+		}
+	}
+
 	// ——— IdentityPort ————————————————————————————————————————————————————————
 
 	async function authenticate(credential: unknown): Promise<Session | AuthError> {
 		if (!isEudiCredential(credential)) {
 			return { code: 'credential_invalid', message: 'unrecognised credential shape' };
 		}
-		return {
-			code: 'auth_failed',
-			message: 'EUDI presentation verification is not implemented in this build (response side pending)',
-		};
+		try {
+			const presentations = await verifyDirectPostResponse({
+				request: credential.request,
+				takeTransaction: (id) => transactions.takeForResponse(id),
+				policy,
+				cert,
+				dcqlQuery,
+				responseUri,
+				registrationCertificate,
+				trustAnchors,
+				allowInsecureUrls: allowInsecure,
+			});
+			const upactor = mapPresentationsToUpactor(presentations);
+
+			sweepResponseCodes();
+			const responseCode = randomBytes(32).toString('base64url');
+			responseCodes.set(responseCode, {
+				upactor,
+				expiresAt: Math.floor(Date.now() / 1000) + RESPONSE_CODE_TTL_SECONDS,
+			});
+			const redirectUri = `${finishUri}?response_code=${responseCode}`;
+
+			const sessionData: EudiSessionData = { upactor, redirectUri, responseCode };
+			return createSession(sessionData);
+		} catch (err) {
+			return normaliseEudiError(err);
+		}
 	}
 
 	async function currentUpactor(_request: Request): Promise<Upactor | null> {
-		// No session machinery yet (lands with the response side).
+		// The adapter carries no browser-session machinery of its own: the
+		// application binds its session at the finish path via
+		// redeemResponseCode and manages it from there (EUDI has no
+		// wallet-side session to consult).
 		return null;
 	}
 
-	async function invalidate(_session: Session): Promise<void> {
-		// No session machinery yet (lands with the response side).
+	async function invalidate(session: Session): Promise<void> {
+		const data = _unwrapSession<EudiSessionData>(session);
+		if (data !== undefined) {
+			responseCodes.delete(data.responseCode);
+		}
 	}
 
 	async function issueRenewal(_identity: Upactor, _evidence: unknown): Promise<Upactor | null> {
@@ -180,7 +256,45 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 		});
 	}
 
-	return { authenticate, currentUpactor, invalidate, issueRenewal, buildPresentationDeeplink, handleRequestUri };
+	function respondToWallet(outcome: Session | AuthError): Response {
+		if (isAuthError(outcome)) {
+			// Wallet-facing OAuth error bodies; port detail stays in the
+			// AuthError the application already holds.
+			const unavailable = outcome.code === 'substrate_unavailable' || outcome.code === 'rate_limited';
+			return jsonResponse(unavailable ? 503 : 400, {
+				error: unavailable ? 'temporarily_unavailable' : 'invalid_request',
+				error_description: outcome.message,
+			});
+		}
+		const data = _unwrapSession<EudiSessionData>(outcome);
+		if (data === undefined) {
+			return jsonResponse(400, {
+				error: 'invalid_request',
+				error_description: 'session was not produced by this adapter',
+			});
+		}
+		return jsonResponse(200, { redirect_uri: data.redirectUri });
+	}
+
+	async function redeemResponseCode(responseCode: string): Promise<Upactor | null> {
+		sweepResponseCodes();
+		if (typeof responseCode !== 'string' || responseCode.length === 0) return null;
+		const entry = responseCodes.get(responseCode);
+		if (!entry) return null;
+		responseCodes.delete(responseCode); // single-use
+		return entry.upactor;
+	}
+
+	return {
+		authenticate,
+		currentUpactor,
+		invalidate,
+		issueRenewal,
+		buildPresentationDeeplink,
+		handleRequestUri,
+		respondToWallet,
+		redeemResponseCode,
+	};
 }
 
 // ——— Internal helpers ————————————————————————————————————————————————————————
@@ -190,6 +304,18 @@ function plainResponse(status: number, body: string, headers: Record<string, str
 		status,
 		headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store', ...headers },
 	});
+}
+
+function jsonResponse(status: number, body: Record<string, unknown>): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+	});
+}
+
+function isAuthError(value: Session | AuthError): value is AuthError {
+	const candidate = value as { code?: unknown; message?: unknown };
+	return typeof candidate.code === 'string' && typeof candidate.message === 'string';
 }
 
 /** Reads `wallet_nonce` from a POSTing wallet's form body, if present. */

@@ -233,7 +233,14 @@ export interface TransactionStore {
 	 * indistinguishable to the caller).
 	 */
 	takeForRequest(id: string): Transaction | null;
-	/** Looks up a live transaction by its `state` value (U3 response side). */
+	/**
+	 * Consumes the single wallet response for `id` (the U3 response side).
+	 * Returns the transaction only when it is live AND its request object has
+	 * been dereferenced (a wallet that never fetched the request cannot know
+	 * the nonce), and deletes it — a replayed `direct_post.jwt` finds nothing.
+	 */
+	takeForResponse(id: string): Transaction | null;
+	/** Looks up a live transaction by its `state` value. */
 	findByState(state: string): Transaction | null;
 }
 
@@ -280,6 +287,14 @@ export function createTransactionStore(ttlSeconds: number = TRANSACTION_TTL_SECO
 		return entry.transaction;
 	}
 
+	function takeForResponse(id: string): Transaction | null {
+		sweep();
+		const entry = transactions.get(id);
+		if (!entry || !entry.requestServed) return null;
+		transactions.delete(id);
+		return entry.transaction;
+	}
+
 	function findByState(state: string): Transaction | null {
 		sweep();
 		for (const entry of transactions.values()) {
@@ -288,7 +303,7 @@ export function createTransactionStore(ttlSeconds: number = TRANSACTION_TTL_SECO
 		return null;
 	}
 
-	return { begin, takeForRequest, findByState };
+	return { begin, takeForRequest, takeForResponse, findByState };
 }
 
 // ——— Signed transaction references ——————————————————————————————————————————
@@ -347,6 +362,48 @@ export interface BuildRequestObjectOptions {
 }
 
 /**
+ * The OpenID4VP authorization request payload for one transaction. Built
+ * once by the request side (into the signed JAR) and rebuilt identically by
+ * the response side (`src/response.ts`), so the payload the wallet's
+ * response is validated against is the payload it was asked with.
+ */
+export function buildAuthorizationRequestPayload(
+	options: Omit<BuildRequestObjectOptions, 'requestUri' | 'allowInsecureUrls'>,
+): Record<string, unknown> {
+	const { cert, transaction } = options;
+	return {
+		response_type: 'vp_token',
+		client_id: cert.clientId,
+		nonce: transaction.nonce,
+		state: transaction.state,
+		response_mode: 'direct_post.jwt',
+		response_uri: options.responseUri,
+		dcql_query: options.dcqlQuery,
+		client_metadata: {
+			jwks: {
+				keys: [
+					{
+						...transaction.responseEncryptionPublicJwk,
+						kid: `enc-${transaction.id}`,
+						use: 'enc',
+						alg: 'ECDH-ES',
+					},
+				],
+			},
+			encrypted_response_enc_values_supported: ['A128GCM'],
+			vp_formats_supported: {
+				'dc+sd-jwt': {
+					'sd-jwt_alg_values': ['ES256'],
+					'kb-jwt_alg_values': ['ES256'],
+				},
+			},
+		},
+		verifier_info: [{ format: 'jwt', data: options.registrationCertificate }],
+		...(options.walletNonce !== undefined ? { wallet_nonce: options.walletNonce } : {}),
+	};
+}
+
+/**
  * Builds the ES256-signed request object (`oauth-authz-req+jwt`):
  * exactly the access certificate in `x5c`, `x509_hash:` client_id,
  * `response_mode: direct_post.jwt`, DCQL from the frozen policy,
@@ -354,41 +411,16 @@ export interface BuildRequestObjectOptions {
  * transaction's single-use nonce/state.
  */
 export async function buildRequestObjectJwt(options: BuildRequestObjectOptions): Promise<string> {
-	const { cert, transaction } = options;
+	const { cert } = options;
 
 	const result = await withInsecureUrls(options.allowInsecureUrls === true, () =>
 		createOpenid4vpAuthorizationRequest({
 			scheme: 'openid4vp://',
-			authorizationRequestPayload: {
-				response_type: 'vp_token',
-				client_id: cert.clientId,
-				nonce: transaction.nonce,
-				state: transaction.state,
-				response_mode: 'direct_post.jwt',
-				response_uri: options.responseUri,
-				dcql_query: options.dcqlQuery,
-				client_metadata: {
-					jwks: {
-						keys: [
-							{
-								...transaction.responseEncryptionPublicJwk,
-								kid: `enc-${transaction.id}`,
-								use: 'enc',
-								alg: 'ECDH-ES',
-							},
-						],
-					},
-					encrypted_response_enc_values_supported: ['A128GCM'],
-					vp_formats_supported: {
-						'dc+sd-jwt': {
-							'sd-jwt_alg_values': ['ES256'],
-							'kb-jwt_alg_values': ['ES256'],
-						},
-					},
-				},
-				verifier_info: [{ format: 'jwt', data: options.registrationCertificate }],
-				...(options.walletNonce !== undefined ? { wallet_nonce: options.walletNonce } : {}),
-			},
+			authorizationRequestPayload: buildAuthorizationRequestPayload(
+				options,
+			) as Parameters<
+				typeof createOpenid4vpAuthorizationRequest
+			>[0]['authorizationRequestPayload'],
 			jar: {
 				requestUri: options.requestUri,
 				jwtSigner: { method: 'x5c', x5c: [...cert.x5c], alg: 'ES256' },

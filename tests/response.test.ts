@@ -1,0 +1,489 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * U3 — response side: authenticate() over the wallet's direct_post.jwt.
+ *
+ * Plan test scenarios: valid presentation → Upactor with opaque id and no
+ * PII field on any enumerable path; nonce mismatch → credential_invalid;
+ * revoked (status list) → credential_rejected; issuer not on trust list →
+ * credential_rejected; status-list endpoint down → substrate_unavailable;
+ * over-disclosed claim absent from mapper input; replayed response →
+ * credential_invalid. Plus the surrounding contract: the kind:'eudi-response'
+ * type predicate, KB-JWT aud/iat checks, state binding, under-disclosure,
+ * wrong vct, expired credentials, tampered signatures, the wallet-follow
+ * redirect_uri with single-use response codes, and invalidate().
+ *
+ * The trusted chain fixtures are locally generated test certificates
+ * (tests/fixtures/README.md); one negative test uses the PID provider CA
+ * from the BMI-published mock trust list to show a locally issued
+ * credential does not chain to the real sandbox anchor.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createEudiAdapter } from '../src/index.js';
+import type { AuthError, EudiConfig, Session, Upactor } from '../src/index.js';
+import {
+	BMI_PID_PROVIDER_TRUSTLIST_JWT,
+	PID_ROOT_CA_PEM,
+	PII_SENTINELS,
+	UNTRUSTED_ISSUER_CERT_PEM,
+	UNTRUSTED_ISSUER_KEY_PEM,
+	pemBodyBase64,
+	runWallet,
+	trustAnchorFromBmiTrustList,
+} from './helpers/wallet.js';
+import { buildStatusListJwt, serveStatusList } from './helpers/status-list.js';
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+const ACCESS_CERTIFICATE = readFileSync(join(FIXTURES, 'access-certificate.pem'), 'utf8');
+const ACCESS_CERTIFICATE_KEY = readFileSync(join(FIXTURES, 'access-certificate.key.pem'), 'utf8');
+const REGISTRATION_JWT = 'eyJhbGciOiJFUzI1NiIsInR5cCI6InJjK2p3dCJ9.eyJzdWIiOiJ0ZXN0In0.c2ln';
+
+function makeConfig(overrides: Partial<EudiConfig> = {}): EudiConfig {
+	return {
+		declaredAttributes: [
+			{
+				format: 'dc+sd-jwt',
+				vct: 'urn:eudi:pid:de:1',
+				claims: [['age_equal_or_over', '18']],
+			},
+		],
+		audience: 'https://rp.example',
+		accessCertificate: ACCESS_CERTIFICATE,
+		accessCertificateKey: ACCESS_CERTIFICATE_KEY,
+		registrationCertificate: REGISTRATION_JWT,
+		endpoints: { baseUrl: 'https://rp.example/oid4vp' },
+		trustAnchors: [{ certificate: PID_ROOT_CA_PEM, name: 'test PID root CA' }],
+		...overrides,
+	};
+}
+
+function makeAdapter(overrides: Partial<EudiConfig> = {}): ReturnType<typeof createEudiAdapter> {
+	return createEudiAdapter(makeConfig(overrides));
+}
+
+function isAuthError(value: Session | AuthError): value is AuthError {
+	return typeof (value as AuthError).code === 'string';
+}
+
+function expectError(value: Session | AuthError, code: AuthError['code']): AuthError {
+	if (!isAuthError(value)) {
+		throw new Error(`expected AuthError '${code}', got a Session`);
+	}
+	expect(value.code).toBe(code);
+	return value;
+}
+
+async function expectSession(value: Session | AuthError): Promise<Session> {
+	if (isAuthError(value)) {
+		throw new Error(`expected a Session, got AuthError ${value.code}: ${value.message}`);
+	}
+	return value;
+}
+
+/** Every string reachable over enumerable paths (JSON-visible surface). */
+function enumerableStrings(value: unknown, out: string[] = []): string[] {
+	if (typeof value === 'string') {
+		out.push(value);
+	} else if (Array.isArray(value)) {
+		for (const entry of value) enumerableStrings(entry, out);
+	} else if (value instanceof Date || value instanceof Set || value instanceof Map) {
+		for (const entry of value instanceof Date ? [] : value) enumerableStrings(entry, out);
+	} else if (typeof value === 'object' && value !== null) {
+		for (const key of Object.keys(value)) {
+			out.push(key);
+			enumerableStrings((value as Record<string, unknown>)[key], out);
+		}
+	}
+	return out;
+}
+
+function expectNoPii(value: unknown): void {
+	const strings = enumerableStrings(value).map((s) => s.toLowerCase());
+	const sentinels = [
+		'erika',
+		'mustermann',
+		'1984-01-26',
+		'de-pii-sentinel-0001',
+		'berlin-sentinel',
+		'heidestrasse',
+		'given_name',
+		'family_name',
+		'birthdate',
+		'personal_administrative_number',
+		'address',
+	];
+	for (const sentinel of sentinels) {
+		expect(strings.some((s) => s.includes(sentinel)), `PII sentinel '${sentinel}' leaked`).toBe(false);
+	}
+}
+
+// ——— The happy path ——————————————————————————————————————————————————————————
+
+describe('authenticate — valid presentation', () => {
+	it('returns a Session; the redeemed Upactor is opaque and PII-free', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter);
+		const outcome = await adapter.authenticate({ kind: 'eudi-response', request });
+		const session = await expectSession(outcome);
+
+		const response = adapter.respondToWallet(session);
+		expect(response.status).toBe(200);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		const body = (await response.json()) as { redirect_uri: string };
+		expect(body.redirect_uri).toMatch(/^https:\/\/rp\.example\/oid4vp\/finish\?response_code=/);
+
+		const code = new URL(body.redirect_uri).searchParams.get('response_code')!;
+		const upactor = await adapter.redeemResponseCode(code);
+		expect(upactor).not.toBeNull();
+		expect(upactor!.id).toMatch(/^[0-9a-f]{32}$/);
+		expect(upactor!.provenance).toEqual({ substrate: 'eudi', instance: 'https://pid-issuer.test.example' });
+		expect(upactor!.lifecycle?.renewable).toBe('reauth');
+		expect(upactor!.lifecycle?.expires_at).toBeInstanceOf(Date);
+		expect(upactor!.capabilities.size).toBe(0);
+		expectNoPii(upactor);
+		expectNoPii(JSON.parse(JSON.stringify(upactor)));
+	});
+
+	it('response codes are single-use and honoured by invalidate()', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter);
+		const session = await expectSession(await adapter.authenticate({ kind: 'eudi-response', request }));
+		const body = (await adapter.respondToWallet(session).json()) as { redirect_uri: string };
+		const code = new URL(body.redirect_uri).searchParams.get('response_code')!;
+
+		expect(await adapter.redeemResponseCode(code)).not.toBeNull();
+		expect(await adapter.redeemResponseCode(code)).toBeNull(); // single-use
+
+		// A fresh flow, invalidated before redemption:
+		const second = await runWallet(adapter);
+		const secondSession = await expectSession(
+			await adapter.authenticate({ kind: 'eudi-response', request: second.request }),
+		);
+		const secondBody = (await adapter.respondToWallet(secondSession).json()) as { redirect_uri: string };
+		const secondCode = new URL(secondBody.redirect_uri).searchParams.get('response_code')!;
+		await adapter.invalidate(secondSession);
+		expect(await adapter.redeemResponseCode(secondCode)).toBeNull();
+	});
+
+	it('the Session itself leaks nothing through JSON or enumeration (§7.4)', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, {
+			issue: { extraClaims: PII_SENTINELS },
+			frame: { age_equal_or_over: { '18': true }, given_name: true, birthdate: true },
+		});
+		const session = await expectSession(await adapter.authenticate({ kind: 'eudi-response', request }));
+		expect(JSON.stringify(session)).toBe('"[upact:session]"');
+		expect(Object.keys(session)).toEqual([]);
+		expectNoPii(session);
+	});
+
+	it('possession-only declaration authenticates with no disclosed claims', async () => {
+		const adapter = makeAdapter({
+			declaredAttributes: [{ format: 'dc+sd-jwt', vct: 'urn:eudi:pid:de:1', claims: [] }],
+		});
+		const { request } = await runWallet(adapter, { frame: {} });
+		const outcome = await adapter.authenticate({ kind: 'eudi-response', request });
+		await expectSession(outcome);
+	});
+
+	it('a status-listed credential with status 0 authenticates', async () => {
+		const server = await serveStatusList(buildStatusListJwt([0, 0, 0, 0]));
+		try {
+			const adapter = makeAdapter({ allowInsecureRequests: true, endpoints: { baseUrl: 'http://localhost:8080/oid4vp' } });
+			const { request } = await runWallet(adapter, {
+				issue: { status: { idx: 2, uri: server.uri } },
+			});
+			await expectSession(await adapter.authenticate({ kind: 'eudi-response', request }));
+		} finally {
+			await server.close();
+		}
+	});
+});
+
+// ——— Over-disclosure is dropped, under-request is verified (KTD3) ————————————
+
+describe('declared-attribute enforcement on the response', () => {
+	it('over-disclosed claims never reach the mapped Upactor or the Session', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, {
+			issue: { extraClaims: PII_SENTINELS, agePredicates: { '18': true, '21': true } },
+			// The wallet over-shares: PII plus an undeclared predicate.
+			frame: {
+				age_equal_or_over: { '18': true, '21': true },
+				given_name: true,
+				family_name: true,
+				birthdate: true,
+				personal_administrative_number: true,
+				address: true,
+			},
+		});
+		const session = await expectSession(await adapter.authenticate({ kind: 'eudi-response', request }));
+		const body = (await adapter.respondToWallet(session).json()) as { redirect_uri: string };
+		const code = new URL(body.redirect_uri).searchParams.get('response_code')!;
+		const upactor = await adapter.redeemResponseCode(code);
+		expectNoPii(upactor);
+		// The undeclared predicate is dropped too: nothing about it is
+		// mapped, and the Upactor carries exactly the port's fields.
+		expect(JSON.stringify(upactor)).not.toContain('age_equal_or_over');
+		expect(Object.keys(upactor!).sort()).toEqual(['capabilities', 'id', 'lifecycle', 'provenance']);
+		expect(Object.keys(upactor!.lifecycle!).sort()).toEqual(['expires_at', 'renewable']);
+		expect(Object.keys(upactor!.provenance!).sort()).toEqual(['instance', 'substrate']);
+	});
+
+	it('a wallet withholding a declared claim → credential_invalid (under-request)', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { frame: {} }); // nothing disclosed
+		const outcome = await adapter.authenticate({ kind: 'eudi-response', request });
+		expectError(outcome, 'credential_invalid');
+	});
+
+	it('a credential of an undeclared vct → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { issue: { vct: 'urn:eudi:hid:de:1' } });
+		const outcome = await adapter.authenticate({ kind: 'eudi-response', request });
+		expectError(outcome, 'credential_invalid');
+	});
+});
+
+// ——— Replay and transaction binding ——————————————————————————————————————————
+
+describe('replay and transaction binding', () => {
+	it('a replayed response → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request, replay } = await runWallet(adapter);
+		await expectSession(await adapter.authenticate({ kind: 'eudi-response', request }));
+		const outcome = await adapter.authenticate({ kind: 'eudi-response', request: replay() });
+		expectError(outcome, 'credential_invalid');
+	});
+
+	it('a response for a never-dereferenced transaction → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter);
+		// Steal the JWE but rewrite the kid to a transaction whose request
+		// object was never served.
+		const fresh = await adapter.buildPresentationDeeplink();
+		void fresh;
+		const body = await request.text();
+		const jwe = new URLSearchParams(body).get('response')!;
+		const [header, ...rest] = jwe.split('.');
+		const decoded = JSON.parse(Buffer.from(header, 'base64url').toString());
+		// Keep everything but point at a random unknown transaction id.
+		decoded.kid = 'enc-doesnotexist';
+		const forged = [Buffer.from(JSON.stringify(decoded)).toString('base64url'), ...rest].join('.');
+		const forgedRequest = new Request('https://rp.example/oid4vp/response', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: `response=${forged}`,
+		});
+		const outcome = await adapter.authenticate({ kind: 'eudi-response', request: forgedRequest });
+		expectError(outcome, 'credential_invalid');
+	});
+
+	it('a response addressed to a different adapter instance → credential_invalid', async () => {
+		const adapterA = makeAdapter();
+		const adapterB = makeAdapter();
+		const { request } = await runWallet(adapterA);
+		const outcome = await adapterB.authenticate({ kind: 'eudi-response', request });
+		expectError(outcome, 'credential_invalid');
+	});
+});
+
+// ——— Cryptographic verification failures → credential_invalid ————————————————
+
+describe('verification failures', () => {
+	it('KB-JWT nonce mismatch → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { kbNonce: 'not-the-transaction-nonce' });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('KB-JWT aud naming another verifier → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { kbAud: 'x509_hash:someoneelse' });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('KB-JWT iat outside the freshness window → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const stale = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
+		const { request } = await runWallet(adapter, { kbIat: stale });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('JARM state mismatch → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { state: 'wrong-state' });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('tampered issuer signature → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { tamperIssuerSignature: true });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('an expired credential → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, {
+			issue: { exp: Math.floor(Date.now() / 1000) - 3600 },
+		});
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('a vp_token under a different credential id → credential_invalid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { credentialId: 'credential_99' });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+});
+
+// ——— Trust chain policy → credential_rejected ————————————————————————————————
+
+describe('issuer trust chain', () => {
+	it('an issuer not on the trust list → credential_rejected', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, {
+			issue: {
+				issuerKeyPem: UNTRUSTED_ISSUER_KEY_PEM,
+				x5c: [pemBodyBase64(UNTRUSTED_ISSUER_CERT_PEM)],
+			},
+		});
+		const error = expectError(
+			await adapter.authenticate({ kind: 'eudi-response', request }),
+			'credential_rejected',
+		);
+		expect(error.message).toContain('trust anchor');
+	});
+
+	it('a locally issued credential does not chain to the BMI mock trust list anchor', async () => {
+		// The real sandbox anchor, extracted from the published mock trust
+		// list (tests/fixtures/README.md). Our test issuer must be rejected
+		// against it.
+		const bmiAnchor = trustAnchorFromBmiTrustList(BMI_PID_PROVIDER_TRUSTLIST_JWT);
+		const adapter = makeAdapter({
+			trustAnchors: [{ certificate: bmiAnchor, name: 'BMI sandbox PID provider CA' }],
+		});
+		const { request } = await runWallet(adapter);
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_rejected');
+	});
+
+	it('an issuer JWT without an x5c chain → credential_rejected', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { issue: { x5c: null } });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_rejected');
+	});
+});
+
+// ——— Token status list ———————————————————————————————————————————————————————
+
+describe('token status list', () => {
+	function insecureAdapter(): ReturnType<typeof createEudiAdapter> {
+		// Status-list URIs in these tests are local http:// servers, so the
+		// insecure-dev flag is on (documented local-development-only).
+		return makeAdapter({
+			allowInsecureRequests: true,
+			endpoints: { baseUrl: 'http://localhost:8080/oid4vp' },
+		});
+	}
+
+	it('a revoked credential → credential_rejected', async () => {
+		const server = await serveStatusList(buildStatusListJwt([0, 1, 0, 0]));
+		try {
+			const adapter = insecureAdapter();
+			const { request } = await runWallet(adapter, {
+				issue: { status: { idx: 1, uri: server.uri } },
+			});
+			const error = expectError(
+				await adapter.authenticate({ kind: 'eudi-response', request }),
+				'credential_rejected',
+			);
+			expect(error.message.toLowerCase()).toContain('not valid');
+		} finally {
+			await server.close();
+		}
+	});
+
+	it('a status-list endpoint that is down → substrate_unavailable', async () => {
+		// A closed port: connection refused.
+		const server = await serveStatusList(buildStatusListJwt([0]));
+		const deadUri = server.uri;
+		await server.close();
+		const adapter = insecureAdapter();
+		const { request } = await runWallet(adapter, {
+			issue: { status: { idx: 0, uri: deadUri } },
+		});
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'substrate_unavailable');
+	});
+
+	it('a rate-limited status-list endpoint → rate_limited', async () => {
+		const server = await serveStatusList({ httpStatus: 429 });
+		try {
+			const adapter = insecureAdapter();
+			const { request } = await runWallet(adapter, {
+				issue: { status: { idx: 0, uri: server.uri } },
+			});
+			expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'rate_limited');
+		} finally {
+			await server.close();
+		}
+	});
+
+	it('a non-https status-list URI without dev mode → credential_invalid', async () => {
+		const adapter = makeAdapter(); // secure config
+		const { request } = await runWallet(adapter, {
+			issue: { status: { idx: 0, uri: 'http://attacker.example/status' } },
+		});
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+});
+
+// ——— The credential guard and envelope checks ————————————————————————————————
+
+describe('credential shape and envelope', () => {
+	it('rejects non-eudi credential shapes without touching state', async () => {
+		const adapter = makeAdapter();
+		for (const bad of [null, 42, 'jwt', {}, { kind: 'oidc-callback' }, { kind: 'eudi-response' }]) {
+			expectError(await adapter.authenticate(bad), 'credential_invalid');
+		}
+	});
+
+	it('rejects a GET where a POST is required', async () => {
+		const adapter = makeAdapter();
+		const request = new Request('https://rp.example/oid4vp/response', { method: 'GET' });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('rejects a POST without a response parameter', async () => {
+		const adapter = makeAdapter();
+		const request = new Request('https://rp.example/oid4vp/response', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: 'foo=bar',
+		});
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('rejects a response JWE without a matching kid', async () => {
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, { kid: null });
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
+	});
+
+	it('respondToWallet maps port errors to wallet-facing OAuth errors', async () => {
+		const adapter = makeAdapter();
+		const invalid = adapter.respondToWallet({ code: 'credential_invalid', message: 'nope' });
+		expect(invalid.status).toBe(400);
+		expect(((await invalid.json()) as { error: string }).error).toBe('invalid_request');
+		const unavailable = adapter.respondToWallet({ code: 'substrate_unavailable', message: 'down' });
+		expect(unavailable.status).toBe(503);
+		expect(((await unavailable.json()) as { error: string }).error).toBe('temporarily_unavailable');
+	});
+
+	it('currentUpactor stays null (session binding is the application via redeemResponseCode)', async () => {
+		const adapter = makeAdapter();
+		expect(await adapter.currentUpactor(new Request('https://rp.example/'))).toBeNull();
+	});
+});

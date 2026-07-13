@@ -61,6 +61,13 @@ export interface EudiEndpoints {
 	 * response (`response_uri`). Default: '/response'.
 	 */
 	responsePath?: string;
+	/**
+	 * Path (relative to `baseUrl`) the wallet sends the user's browser to
+	 * after a successful presentation (the `redirect_uri` in the adapter's
+	 * response to the wallet, carrying a single-use `response_code` for
+	 * session binding). Default: '/finish'.
+	 */
+	finishPath?: string;
 }
 
 /** Configuration for createEudiAdapter. */

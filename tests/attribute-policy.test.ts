@@ -14,6 +14,10 @@ import type { EudiConfig } from '../src/index.js';
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const ACCESS_CERTIFICATE = readFileSync(join(FIXTURES, 'access-certificate.pem'), 'utf8');
 const ACCESS_CERTIFICATE_KEY = readFileSync(join(FIXTURES, 'access-certificate.key.pem'), 'utf8');
+// A real (test) certificate: trust anchors are parsed at construction since
+// U3, so a bare sentinel string would throw. Its PEM body doubles as the
+// leak sentinel for the closure suite.
+const TRUST_ANCHOR_PEM = readFileSync(join(FIXTURES, 'pid-root-ca.pem'), 'utf8');
 
 /**
  * Distinctive slice of a PEM's base64 body, used as a leak sentinel: if any
@@ -43,7 +47,7 @@ function makeConfig(overrides: Partial<EudiConfig> = {}): EudiConfig {
 		accessCertificateKey: ACCESS_CERTIFICATE_KEY,
 		registrationCertificate: 'SENTINEL_REGISTRATION_JWT',
 		endpoints: { baseUrl: 'https://rp.example/oid4vp' },
-		trustAnchors: [{ certificate: 'SENTINEL_TRUST_ANCHOR', name: 'mock root' }],
+		trustAnchors: [{ certificate: TRUST_ANCHOR_PEM, name: 'mock root' }],
 		...overrides,
 	};
 }
@@ -297,21 +301,21 @@ describe('createEudiAdapter — construction', () => {
 	});
 });
 
-describe('createEudiAdapter — port shape (pre-protocol build)', () => {
+describe('createEudiAdapter — port shape', () => {
 	it('authenticate rejects an unrecognised credential shape with credential_invalid', async () => {
 		const adapter = createEudiAdapter(makeConfig());
 		const result = await adapter.authenticate({ kind: 'something-else' });
 		expect(result).toMatchObject({ code: 'credential_invalid' });
 	});
 
-	it('authenticate on a well-shaped eudi-response returns auth_failed (response side pending), not a throw', async () => {
+	it('authenticate on a well-shaped but empty eudi-response returns a port error, not a throw', async () => {
 		const adapter = createEudiAdapter(makeConfig());
 		const credential = {
 			kind: 'eudi-response',
 			request: new Request('https://rp.example/oid4vp/response', { method: 'POST' }),
 		};
 		const result = await adapter.authenticate(credential);
-		expect(result).toMatchObject({ code: 'auth_failed' });
+		expect(result).toMatchObject({ code: 'credential_invalid' });
 	});
 
 	it('issueRenewal returns null (EUDI has no represence semantics)', async () => {
@@ -320,7 +324,7 @@ describe('createEudiAdapter — port shape (pre-protocol build)', () => {
 		expect(await adapter.issueRenewal(upactor, null)).toBeNull();
 	});
 
-	it('currentUpactor returns null (no session machinery in this build)', async () => {
+	it('currentUpactor returns null (session binding is the application, via redeemResponseCode)', async () => {
 		const adapter = createEudiAdapter(makeConfig());
 		expect(await adapter.currentUpactor(new Request('https://rp.example/'))).toBeNull();
 	});
@@ -342,7 +346,7 @@ describe('createEudiAdapter — back-channel closure conformance (16 vectors)', 
 				pemBodySentinel(ACCESS_CERTIFICATE),
 				pemBodySentinel(ACCESS_CERTIFICATE_KEY),
 				'SENTINEL_REGISTRATION_JWT',
-				'SENTINEL_TRUST_ANCHOR',
+				pemBodySentinel(TRUST_ANCHOR_PEM),
 			],
 		};
 	}

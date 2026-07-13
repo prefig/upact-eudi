@@ -8,12 +8,14 @@
  * enforced at construction.
  *
  * Wraps @openid4vc/openid4vp + @sd-jwt/sd-jwt-vc (see docs/decisions.md D1
- * for why not Credo). U2 state: the authorization request side is live
- * (signed request object by reference, DCQL from the frozen policy, wallet
- * deeplink); the response side lands in U3.
+ * for why not Credo). Both protocol sides are live: the authorization
+ * request side (signed request object by reference, DCQL from the frozen
+ * policy, wallet deeplink) and the response side (direct_post.jwt
+ * verification, declared-claims enforcement, claims mapping, wallet-follow
+ * redirect for session binding).
  */
 
-export { createEudiAdapter } from './adapter.js';
+export { createEudiAdapter, RESPONSE_CODE_TTL_SECONDS } from './adapter.js';
 export type { EudiAdapterExtensions } from './adapter.js';
 
 export {
@@ -31,6 +33,19 @@ export {
 	TRANSACTION_TTL_SECONDS,
 } from './request.js';
 export type { DcqlCredentialQuery, DcqlQuery } from './request.js';
+
+export {
+	CredentialStatusError,
+	KB_JWT_IAT_SKEW_SECONDS,
+	KB_JWT_MAX_AGE_SECONDS,
+	normaliseEudiError,
+	ResponseInvalidError,
+	StatusListUnavailableError,
+	TrustChainError,
+} from './response.js';
+export type { VerifiedPresentation } from './response.js';
+
+export { mapPresentationsToUpactor } from './claims-mapper.js';
 
 export type {
 	AttributeDeclaration,
