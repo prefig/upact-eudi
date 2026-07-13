@@ -51,11 +51,13 @@
 	},
 	"peerDependencies": {
 		"@openid4vc/openid4vp": "^0.5.4",
+		"@openid4vc/utils": "^0.5.4",
 		"@prefig/upact": "^0.1.0",
 		"@sd-jwt/sd-jwt-vc": "^0.20.0"
 	},
 	"devDependencies": {
 		"@openid4vc/openid4vp": "^0.5.4",
+		"@openid4vc/utils": "^0.5.4",
 		"@prefig/upact": "^0.1.1",
 		"@sd-jwt/sd-jwt-vc": "^0.20.0",
 		"@types/node": "^22.20.1",

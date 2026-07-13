@@ -57,3 +57,36 @@ assemble in U2/U3 (x5c trust-chain policy against the trust-list anchors,
 token status list checks, JWE handling for `direct_post.jwt`). Those pieces
 must be tested as if we wrote them, because we did. `@animo-id/mdoc` joins
 later if mdoc verification lands.
+
+## D2. U2: transactions are in-memory and instance-bound
+
+Date: 2026-07-13. Status: decided.
+
+The authorization request side needs per-transaction state three times over:
+single-use enforcement on the `request_uri` dereference, the nonce/state the
+U3 response side must check the presentation against, and the ephemeral
+P-256 private key that decrypts the wallet's `direct_post.jwt` JWE. Unlike
+upact-oidc, none of this can ride in a cookie: the party returning to us is
+the wallet, not a browser carrying our cookie jar.
+
+So the store is an in-memory Map in the factory closure, TTL-swept
+(10 minutes, matching upact-oidc's state-cookie lifetime), with the
+`request_uri` carrying an HMAC-SHA256-signed reference under an
+instance-local random key. Consequences, stated plainly:
+
+- A transaction is bound to the adapter instance that began it. Multi-process
+  deployments where the deeplink is built by one process and the wallet's
+  dereference lands on another will 404. That is out of scope for the
+  sandbox target (a single locally-run relying party); if it surfaces, the
+  fix is a pluggable store, not a signed stateless token, because the JWE
+  private key cannot be safely round-tripped through the wallet.
+- Restarting the process kills in-flight transactions. Same failure mode as
+  losing upact-oidc's state cookies mid-login: the user retries.
+- Forged or replayed references are indistinguishable from expired ones by
+  design (uniform 404, no oracle).
+
+The dev-mode `allowInsecureRequests` flag relaxes the wrapped library's
+https-only URL validation via its module-global config for the duration of
+one build call (set, await, restore). A concurrently-building secure
+instance in the same process could theoretically observe the relaxed window;
+acceptable for a flag documented as local-development-only.

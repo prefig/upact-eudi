@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
 import {
 	ALLOWED_CLAIM_PATHS,
@@ -8,7 +11,24 @@ import {
 } from '../src/index.js';
 import type { EudiConfig } from '../src/index.js';
 
-/** Sentinel-laden config: no sentinel may leak through the adapter surface. */
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+const ACCESS_CERTIFICATE = readFileSync(join(FIXTURES, 'access-certificate.pem'), 'utf8');
+const ACCESS_CERTIFICATE_KEY = readFileSync(join(FIXTURES, 'access-certificate.key.pem'), 'utf8');
+
+/**
+ * Distinctive slice of a PEM's base64 body, used as a leak sentinel: if any
+ * reflection vector can reach the closure-held key material, this substring
+ * would surface.
+ */
+function pemBodySentinel(pem: string): string {
+	return pem.split('\n').filter((line) => !line.includes('-----'))[0]!.trim();
+}
+
+/**
+ * Config over real fixture key material (the factory parses the access
+ * certificate at construction) plus sentinel strings for the inputs it
+ * carries opaquely. No sentinel may leak through the adapter surface.
+ */
 function makeConfig(overrides: Partial<EudiConfig> = {}): EudiConfig {
 	return {
 		declaredAttributes: [
@@ -19,8 +39,8 @@ function makeConfig(overrides: Partial<EudiConfig> = {}): EudiConfig {
 			},
 		],
 		audience: 'https://rp.example',
-		accessCertificate: 'SENTINEL_ACCESS_CERT',
-		accessCertificateKey: 'SENTINEL_PRIVATE_KEY',
+		accessCertificate: ACCESS_CERTIFICATE,
+		accessCertificateKey: ACCESS_CERTIFICATE_KEY,
 		registrationCertificate: 'SENTINEL_REGISTRATION_JWT',
 		endpoints: { baseUrl: 'https://rp.example/oid4vp' },
 		trustAnchors: [{ certificate: 'SENTINEL_TRUST_ANCHOR', name: 'mock root' }],
@@ -319,8 +339,8 @@ describe('createEudiAdapter — back-channel closure conformance (16 vectors)', 
 		return {
 			adapter,
 			sentinels: [
-				'SENTINEL_ACCESS_CERT',
-				'SENTINEL_PRIVATE_KEY',
+				pemBodySentinel(ACCESS_CERTIFICATE),
+				pemBodySentinel(ACCESS_CERTIFICATE_KEY),
 				'SENTINEL_REGISTRATION_JWT',
 				'SENTINEL_TRUST_ANCHOR',
 			],
