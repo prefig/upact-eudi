@@ -269,6 +269,11 @@ type EudiAdapter = ReturnType<typeof createEudiAdapter>;
 
 export interface WalletRunOptions {
 	issue?: IssueOptions;
+	/**
+	 * Present this already-issued PID instead of issuing a fresh one
+	 * (re-presentation tests: same stored credential, new transaction).
+	 */
+	pid?: IssuedPid;
 	/** Presentation frame override (default: disclose age_equal_or_over/18). */
 	frame?: Record<string, unknown>;
 	kbAud?: string;
@@ -312,7 +317,7 @@ export async function runWallet(adapter: EudiAdapter, options: WalletRunOptions 
 
 	const encryptionKey = requestPayload.client_metadata.jwks.keys[0] as JsonWebKey & { kid: string };
 
-	const pid = await issueTestPid(options.issue);
+	const pid = options.pid ?? (await issueTestPid(options.issue));
 	const presented = await presentTestPid(pid, {
 		...(options.frame !== undefined ? { frame: options.frame } : {}),
 		kbAud: options.kbAud ?? (requestPayload.client_id as string),

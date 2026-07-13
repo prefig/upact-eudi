@@ -203,3 +203,30 @@ us to decide:
   (our access certificate is a local test cert; only the sandbox registrar
   can issue a chained one) and the loopback-response_uri WARNING (inherent
   to a local harness). Anything else failing fails the suite.
+
+## D5. U4: Upactor identity is per-authentication; declared predicates are requirements
+
+Date: 2026-07-13. Status: decided. Full record with the weighed options and
+the evidence: docs/identity-stability.md (supersedes D3's interim
+"per-presentation" id).
+
+- `Upactor.id` = sha256 over the substrate tag, the single-use transaction
+  nonce, and each presentation's issuer + KB-JWT sd_hash (32 hex chars).
+  Equal ids mean the same successful authenticate() call; ids never repeat
+  across authentications. The nonce is folded in because a bare sd_hash
+  derivation reproduces itself when a wallet re-presents the same stored
+  credential, which would hand the application an unearned cross-visit
+  correlation handle (SPEC §7.3).
+- No cross-session recognition is offered. Deployments needing a returning
+  identity pair at the application level (EUDI proves eligibility once, the
+  app issues its own credential); the adapter's contribution to that
+  pattern is the one-shot id plus single-use redeemResponseCode.
+- Framing constraint on the pairing model: an EUDI presentation is one
+  admissible admission evidence type under community-set policy, per
+  scope, never an app-wide requirement; the in-person ceremony stays the
+  universal admission path, and EUDI-gated scopes must be legible as the
+  community's choice (docs/identity-stability.md).
+- Declared predicates must be disclosed as true; false throws
+  PredicateNotSatisfiedError, normalised to `credential_rejected`. A
+  successful authenticate() attests every declared predicate; no boolean
+  rides on the Upactor (SPEC §7.2).

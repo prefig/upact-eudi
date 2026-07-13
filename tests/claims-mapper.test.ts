@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * U3 — claims mapper: verified presentations → Upactor.
+ * U3/U4 — claims mapper: verified presentations → Upactor.
  *
- * The mapper is allow-list-based: it reads vct, issuer, expiry, and the
- * presentation tag, and nothing else. These tests pin the privacy minima
- * (SPEC §7): opaque derived id, no PII on any enumerable path, lifecycle
- * from credential validity with renewable 'reauth', provenance
- * { substrate: 'eudi', instance: issuer }, and — pending U4 — no claim
- * values of any kind on the Upactor, declared or not.
+ * The mapper is allow-list-based: it reads vct, issuer, expiry, nonce, the
+ * presentation tag, and the declared boolean predicates, and nothing else.
+ * These tests pin the privacy minima (SPEC §7) and the U4 identity-stability
+ * decision (docs/identity-stability.md): the id is per-authentication
+ * (folding in the single-use transaction nonce), equal ids mean the same
+ * successful authentication, declared predicates are requirements (false →
+ * PredicateNotSatisfiedError → credential_rejected), and no claim value of
+ * any kind rides on the Upactor.
  *
  * Also covers filterToDeclaredClaims, the pre-mapper gate that drops
  * over-disclosure and rejects under-disclosure.
@@ -15,7 +17,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { mapPresentationsToUpactor } from '../src/claims-mapper.js';
-import { filterToDeclaredClaims, ResponseInvalidError } from '../src/response.js';
+import {
+	filterToDeclaredClaims,
+	normaliseEudiError,
+	PredicateNotSatisfiedError,
+	ResponseInvalidError,
+} from '../src/response.js';
 import type { VerifiedPresentation } from '../src/response.js';
 
 function presentation(overrides: Partial<VerifiedPresentation> = {}): VerifiedPresentation {
@@ -23,6 +30,7 @@ function presentation(overrides: Partial<VerifiedPresentation> = {}): VerifiedPr
 		vct: 'urn:eudi:pid:de:1',
 		issuer: 'https://pid-issuer.test.example',
 		expiresAt: new Date('2026-08-01T00:00:00Z'),
+		nonce: 'nonce-tx-1',
 		presentationTag: 'tag-abc123',
 		declaredClaims: new Map([['age_equal_or_over/18', true]]),
 		...overrides,
@@ -30,23 +38,36 @@ function presentation(overrides: Partial<VerifiedPresentation> = {}): VerifiedPr
 }
 
 describe('mapPresentationsToUpactor', () => {
-	it('derives an opaque 32-hex id that does not embed issuer or tag', () => {
+	it('derives an opaque 32-hex id that embeds neither issuer, tag, nor nonce', () => {
 		const upactor = mapPresentationsToUpactor([presentation()]);
 		expect(upactor.id).toMatch(/^[0-9a-f]{32}$/);
 		expect(upactor.id).not.toContain('pid-issuer');
 		expect(upactor.id).not.toContain('tag-abc123');
+		expect(upactor.id).not.toContain('nonce-tx-1');
 	});
 
-	it('is deterministic per presentation and differs across presentations', () => {
+	it('is deterministic for one wallet response and differs across presentations', () => {
 		const a = mapPresentationsToUpactor([presentation()]);
 		const b = mapPresentationsToUpactor([presentation()]);
 		const c = mapPresentationsToUpactor([presentation({ presentationTag: 'tag-other' })]);
-		// Documented interim semantics: equal ids mean the same presentation.
+		// Documented semantics: equal ids mean the same successful
+		// authentication (same nonce, same presentations).
 		expect(a.id).toBe(b.id);
 		expect(c.id).not.toBe(a.id);
 	});
 
-	it('ids differ across issuers even with equal tags', () => {
+	it('re-presenting the identical credential in a new transaction gets a new id (U4)', () => {
+		// Same issuer, same sd_hash (a wallet re-presenting the same stored
+		// credential with the same disclosure selection reproduces the tag);
+		// only the single-use transaction nonce differs. Without the nonce in
+		// the derivation this would be a cross-visit correlation handle
+		// (SPEC §7.3, docs/identity-stability.md).
+		const first = mapPresentationsToUpactor([presentation({ nonce: 'nonce-visit-1' })]);
+		const second = mapPresentationsToUpactor([presentation({ nonce: 'nonce-visit-2' })]);
+		expect(first.id).not.toBe(second.id);
+	});
+
+	it('ids differ across issuers even with equal tags and nonces', () => {
 		const a = mapPresentationsToUpactor([presentation({ issuer: 'https://a.example' })]);
 		const b = mapPresentationsToUpactor([presentation({ issuer: 'https://b.example' })]);
 		expect(a.id).not.toBe(b.id);
@@ -100,12 +121,12 @@ describe('mapPresentationsToUpactor', () => {
 		expect(upactor.display_hint).toBeUndefined();
 	});
 
-	it('places no claim values on the Upactor, declared or not (pending U4)', () => {
+	it('places no claim values on the Upactor, declared or not (SPEC §7.2)', () => {
 		const upactor = mapPresentationsToUpactor([
 			presentation({
 				declaredClaims: new Map([
 					['age_equal_or_over/18', true],
-					['age_equal_or_over/65', false],
+					['age_equal_or_over/65', true],
 				]),
 			}),
 		]);
@@ -116,6 +137,60 @@ describe('mapPresentationsToUpactor', () => {
 
 	it('throws on an empty presentation set', () => {
 		expect(() => mapPresentationsToUpactor([])).toThrow(/empty/);
+	});
+});
+
+describe('declared predicates are requirements (U4)', () => {
+	it('all declared predicates true → maps', () => {
+		const upactor = mapPresentationsToUpactor([
+			presentation({
+				declaredClaims: new Map([
+					['age_equal_or_over/18', true],
+					['age_over_21', true],
+				]),
+			}),
+		]);
+		expect(upactor.id).toMatch(/^[0-9a-f]{32}$/);
+	});
+
+	it('a possession-only presentation (no declared claims) maps', () => {
+		const upactor = mapPresentationsToUpactor([
+			presentation({ declaredClaims: new Map() }),
+		]);
+		expect(upactor.id).toMatch(/^[0-9a-f]{32}$/);
+	});
+
+	it('a false predicate throws PredicateNotSatisfiedError naming the predicate', () => {
+		expect(() =>
+			mapPresentationsToUpactor([
+				presentation({ declaredClaims: new Map([['age_equal_or_over/18', false]]) }),
+			]),
+		).toThrow(PredicateNotSatisfiedError);
+		expect(() =>
+			mapPresentationsToUpactor([
+				presentation({ declaredClaims: new Map([['age_equal_or_over/18', false]]) }),
+			]),
+		).toThrow(/age_equal_or_over\/18/);
+	});
+
+	it('one false predicate among true ones is enough to reject', () => {
+		expect(() =>
+			mapPresentationsToUpactor([
+				presentation({
+					declaredClaims: new Map([
+						['age_over_18', true],
+						['age_over_65', false],
+					]),
+				}),
+			]),
+		).toThrow(PredicateNotSatisfiedError);
+	});
+
+	it('PredicateNotSatisfiedError normalises to credential_rejected', () => {
+		const error = normaliseEudiError(
+			new PredicateNotSatisfiedError('upact-eudi: declared predicate was disclosed as false'),
+		);
+		expect(error.code).toBe('credential_rejected');
 	});
 });
 
@@ -136,6 +211,8 @@ describe('filterToDeclaredClaims — the pre-mapper gate', () => {
 	});
 
 	it('over-disclosed claims are absent from the mapper input', () => {
+		// The gate passes a disclosed false through (presence is its job);
+		// requiring truth is the mapper's job, tested above.
 		const declared = filterToDeclaredClaims(declaration, {
 			age_equal_or_over: { '18': false },
 			personal_administrative_number: 'DE-PII-SENTINEL-0001',

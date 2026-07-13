@@ -91,6 +91,19 @@ export class ResponseInvalidError extends Error {
 	}
 }
 
+/**
+ * A declared predicate verified cryptographically but was disclosed as
+ * `false`. The presentation is authentic; the holder does not meet the
+ * declared eligibility bar (docs/identity-stability.md: a declared predicate
+ * is a requirement, so a successful authenticate() attests every one).
+ */
+export class PredicateNotSatisfiedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'PredicateNotSatisfiedError';
+	}
+}
+
 // ——— Error normalisation —————————————————————————————————————————————————————
 
 /**
@@ -100,6 +113,8 @@ export class ResponseInvalidError extends Error {
  *
  * - trust-chain and status-list rejections → `credential_rejected`
  *   (the credential is well-formed but the verifier's policy refuses it)
+ * - a declared predicate disclosed as false → `credential_rejected`
+ *   (authentic presentation, eligibility bar not met)
  * - status-list endpoint outages → `substrate_unavailable` (429 → `rate_limited`)
  * - everything failing cryptographic or protocol verification
  *   (nonce/state/aud/sd_hash/signature/decryption/expiry/replay)
@@ -116,6 +131,9 @@ export function normaliseEudiError(err: unknown): AuthError {
 		return { code: 'credential_rejected', message: err.message };
 	}
 	if (err instanceof CredentialStatusError) {
+		return { code: 'credential_rejected', message: err.message };
+	}
+	if (err instanceof PredicateNotSatisfiedError) {
 		return { code: 'credential_rejected', message: err.message };
 	}
 	if (err instanceof ResponseInvalidError) {
@@ -468,7 +486,20 @@ export interface VerifiedPresentation {
 	readonly issuer?: string;
 	/** The credential's `exp`, when present (lifecycle expiry). */
 	readonly expiresAt?: Date;
-	/** The KB-JWT's sd_hash: unique per presentation, derived, non-PII. */
+	/**
+	 * The transaction nonce the KB-JWT echoed. Verifier-generated, single-use,
+	 * per-authentication; the claims mapper folds it into `Upactor.id` so the
+	 * id never repeats across authentications, even when a wallet re-presents
+	 * the identical stored credential (docs/identity-stability.md).
+	 */
+	readonly nonce: string;
+	/**
+	 * The KB-JWT's sd_hash: derived, non-PII. NOT unique per presentation on
+	 * its own — re-presenting the same stored credential with the same
+	 * disclosure selection reproduces it (the sd_hash covers the SD-JWT and
+	 * disclosures, not the nonce). Uniqueness per authentication comes from
+	 * `nonce`.
+	 */
 	readonly presentationTag: string;
 	/** Declared claim path (joined with '/') → disclosed boolean predicate. */
 	readonly declaredClaims: ReadonlyMap<string, boolean>;
@@ -705,6 +736,7 @@ export async function verifyDirectPostResponse(
 			vct: declaration.vct,
 			...(typeof payload.iss === 'string' ? { issuer: payload.iss } : {}),
 			...(typeof payload.exp === 'number' ? { expiresAt: new Date(payload.exp * 1000) } : {}),
+			nonce: transaction.nonce,
 			presentationTag: result.kb.payload.sd_hash,
 			declaredClaims,
 		});

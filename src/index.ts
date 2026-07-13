@@ -39,6 +39,7 @@ export {
 	KB_JWT_IAT_SKEW_SECONDS,
 	KB_JWT_MAX_AGE_SECONDS,
 	normaliseEudiError,
+	PredicateNotSatisfiedError,
 	ResponseInvalidError,
 	StatusListUnavailableError,
 	TrustChainError,

@@ -30,6 +30,7 @@ import {
 	PII_SENTINELS,
 	UNTRUSTED_ISSUER_CERT_PEM,
 	UNTRUSTED_ISSUER_KEY_PEM,
+	issueTestPid,
 	pemBodyBase64,
 	runWallet,
 	trustAnchorFromBmiTrustList,
@@ -288,6 +289,46 @@ describe('replay and transaction binding', () => {
 		const { request } = await runWallet(adapterA);
 		const outcome = await adapterB.authenticate({ kind: 'eudi-response', request });
 		expectError(outcome, 'credential_invalid');
+	});
+});
+
+// ——— Identity stability (U4, docs/identity-stability.md) —————————————————————
+
+describe('identity stability (U4)', () => {
+	it('re-presenting the same stored credential yields a fresh id per authentication', async () => {
+		// Same stored PID, same disclosure selection, two transactions: the
+		// sd_hash reproduces itself, so without the nonce in the derivation
+		// these two authentications would share an id (a cross-visit
+		// correlation handle the application never earned, SPEC §7.3).
+		const adapter = makeAdapter();
+		const pid = await issueTestPid();
+
+		const redeem = async (): Promise<Upactor> => {
+			const { request } = await runWallet(adapter, { pid });
+			const session = await expectSession(await adapter.authenticate({ kind: 'eudi-response', request }));
+			const body = (await adapter.respondToWallet(session).json()) as { redirect_uri: string };
+			const code = new URL(body.redirect_uri).searchParams.get('response_code')!;
+			const upactor = await adapter.redeemResponseCode(code);
+			expect(upactor).not.toBeNull();
+			return upactor!;
+		};
+
+		const first = await redeem();
+		const second = await redeem();
+		expect(first.id).toMatch(/^[0-9a-f]{32}$/);
+		expect(second.id).toMatch(/^[0-9a-f]{32}$/);
+		expect(first.id).not.toBe(second.id);
+	});
+
+	it('a declared predicate disclosed as false → credential_rejected over the wire', async () => {
+		// Authentic credential, authentic presentation; the holder is simply
+		// under the declared bar. Port error, never an exception.
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, {
+			issue: { agePredicates: { '18': false } },
+		});
+		const outcome = await adapter.authenticate({ kind: 'eudi-response', request });
+		expectError(outcome, 'credential_rejected');
 	});
 });
 
