@@ -59,7 +59,7 @@ This adapter uses `createSession` from `@prefig/upact` for Session construction.
 
 ## Adapter back-channel closure (SPEC §7.5)
 
-Passes a sixteen-vector reflection test at `tests/attribute-policy.test.ts` (`back-channel closure conformance` suite), parity with the sibling adapters. Sentinel values for the access certificate, its private key, the registration certificate JWT, and the trust anchors are verified unreachable through JSON.stringify, Object.keys, Object.getOwnPropertyNames, Reflect.ownKeys, Object.getOwnPropertySymbols, for-in, structuredClone (DataCloneError is the proof), util.inspect, direct property access by likely names, spread, replacer-wrapped stringify, and Object.entries. All substrate state (frozen policy, parsed certificate and key, transaction store, HMAC key, response codes) lives in the factory closure.
+Passes a reflection test at `tests/attribute-policy.test.ts` (`back-channel closure conformance` suite), parity with the sibling adapters. Sentinel values for the access certificate, its private key, the registration certificate JWT, and the trust anchors are verified unreachable through JSON.stringify, Object.keys, Object.getOwnPropertyNames, Reflect.ownKeys, Object.getOwnPropertySymbols, for-in, structuredClone (DataCloneError is the proof), util.inspect, direct property access by likely names (including the SPEC §7.5-named `client`), spread, replacer-wrapped stringify, and Object.entries. All substrate state (frozen policy, parsed certificate and key, transaction store, HMAC key, response codes) lives in the factory closure.
 
 ## Identifier derivation (SPEC §4.4, §7.3)
 

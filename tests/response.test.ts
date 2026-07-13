@@ -26,12 +26,16 @@ import { createEudiAdapter } from '../src/index.js';
 import type { AuthError, EudiConfig, Session, Upactor } from '../src/index.js';
 import {
 	BMI_PID_PROVIDER_TRUSTLIST_JWT,
+	FORGED_SUBISSUER_CERT_PEM,
+	FORGED_SUBISSUER_KEY_PEM,
+	PID_ISSUER_CERT_PEM,
 	PID_ROOT_CA_PEM,
 	PII_SENTINELS,
 	UNTRUSTED_ISSUER_CERT_PEM,
 	UNTRUSTED_ISSUER_KEY_PEM,
 	issueTestPid,
 	pemBodyBase64,
+	presentTestPid,
 	runWallet,
 	trustAnchorFromBmiTrustList,
 } from './helpers/wallet.js';
@@ -181,6 +185,15 @@ describe('authenticate — valid presentation', () => {
 		expectNoPii(session);
 	});
 
+	it('the configured audience is not the enforced presentation audience (client_id is)', async () => {
+		// Documented behavior: EudiConfig.audience is a declaration field, not
+		// the KB-JWT aud. The presentation is addressed to the client_id, so a
+		// differing configured audience has no effect on verification.
+		const adapter = makeAdapter({ audience: 'https://not-the-client-id.example' });
+		const { request } = await runWallet(adapter); // KB aud defaults to client_id
+		await expectSession(await adapter.authenticate({ kind: 'eudi-response', request }));
+	});
+
 	it('possession-only declaration authenticates with no disclosed claims', async () => {
 		const adapter = makeAdapter({
 			declaredAttributes: [{ format: 'dc+sd-jwt', vct: 'urn:eudi:pid:de:1', claims: [] }],
@@ -232,6 +245,35 @@ describe('declared-attribute enforcement on the response', () => {
 		expect(Object.keys(upactor!).sort()).toEqual(['capabilities', 'id', 'lifecycle', 'provenance']);
 		expect(Object.keys(upactor!.lifecycle!).sort()).toEqual(['expires_at', 'renewable']);
 		expect(Object.keys(upactor!.provenance!).sort()).toEqual(['instance', 'substrate']);
+	});
+
+	it('a disclosure spliced past a fixed KB-JWT sd_hash → credential_invalid', async () => {
+		// The KB-JWT binds the exact set of disclosures via sd_hash. Splicing an
+		// extra disclosure (obtained from a second presentation of the same
+		// credential) in front of a KB-JWT that covers only the original set
+		// must fail: the recomputed sd_hash no longer matches.
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, {
+			issue: { agePredicates: { '18': true, '21': true } },
+			frame: { age_equal_or_over: { '18': true } },
+			mutatePresentation: async (presented, pid, ctx) => {
+				const withBoth = await presentTestPid(pid, {
+					frame: { age_equal_or_over: { '18': true, '21': true } },
+					kbAud: ctx.kbAud,
+					kbNonce: ctx.kbNonce,
+				});
+				// Disclosure segments sit between the issuer JWT and the KB-JWT.
+				const disclosuresOf = (s: string): string[] => s.split('~').slice(1, -1);
+				const parts = presented.split('~');
+				const issuerJwt = parts[0];
+				const kbOnly18 = parts[parts.length - 1];
+				const disc18 = disclosuresOf(presented);
+				const extra = disclosuresOf(withBoth).filter((d) => !disc18.includes(d));
+				expect(extra.length).toBe(1); // the '21' disclosure
+				return [issuerJwt, ...disc18, ...extra, kbOnly18].join('~');
+			},
+		});
+		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_invalid');
 	});
 
 	it('a wallet withholding a declared claim → credential_invalid (under-request)', async () => {
@@ -416,6 +458,24 @@ describe('issuer trust chain', () => {
 		const { request } = await runWallet(adapter, { issue: { x5c: null } });
 		expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'credential_rejected');
 	});
+
+	it('a non-CA leaf presented as an intermediate (forged sub-chain) → credential_rejected', async () => {
+		// RFC 5280 path validation: the pid-issuer leaf is CA:FALSE, so it may
+		// not sign another certificate in the chain. A holder of any anchor-issued
+		// end-entity cert must not be able to mint a sub-issuer under it.
+		const adapter = makeAdapter();
+		const { request } = await runWallet(adapter, {
+			issue: {
+				issuerKeyPem: FORGED_SUBISSUER_KEY_PEM,
+				x5c: [pemBodyBase64(FORGED_SUBISSUER_CERT_PEM), pemBodyBase64(PID_ISSUER_CERT_PEM)],
+			},
+		});
+		const error = expectError(
+			await adapter.authenticate({ kind: 'eudi-response', request }),
+			'credential_rejected',
+		);
+		expect(error.message).toMatch(/CA certificate|keyCertSign/);
+	});
 });
 
 // ——— Token status list ———————————————————————————————————————————————————————
@@ -467,6 +527,31 @@ describe('token status list', () => {
 				issue: { status: { idx: 0, uri: server.uri } },
 			});
 			expectError(await adapter.authenticate({ kind: 'eudi-response', request }), 'rate_limited');
+		} finally {
+			await server.close();
+		}
+	});
+
+	it('a status list signed by an untrusted key (MITM swap) → credential_rejected', async () => {
+		// A validly-structured all-zero status list, but signed by a key that
+		// does not chain to a configured trust anchor. The status source must
+		// itself be trusted, so this must be rejected rather than believed.
+		const server = await serveStatusList(
+			buildStatusListJwt([0, 0, 0, 0], {
+				issuerKeyPem: UNTRUSTED_ISSUER_KEY_PEM,
+				x5c: [pemBodyBase64(UNTRUSTED_ISSUER_CERT_PEM)],
+			}),
+		);
+		try {
+			const adapter = insecureAdapter();
+			const { request } = await runWallet(adapter, {
+				issue: { status: { idx: 0, uri: server.uri } },
+			});
+			const error = expectError(
+				await adapter.authenticate({ kind: 'eudi-response', request }),
+				'credential_rejected',
+			);
+			expect(error.message.toLowerCase()).toContain('status list');
 		} finally {
 			await server.close();
 		}

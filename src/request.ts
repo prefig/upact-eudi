@@ -205,10 +205,11 @@ export function buildDcqlQuery(policy: AttributePolicy): DcqlQuery {
 
 /**
  * One presentation transaction: begun by buildPresentationDeeplink, its
- * request object dereferenced once by the wallet, and (in U3) its response
- * matched back by `state`. The response-encryption keypair is fresh P-256
- * per transaction, as `direct_post.jwt` requires; the private JWK stays in
- * the store for U3's JWE decryption.
+ * request object dereferenced once by the wallet, and its response matched
+ * back by the JWE `kid` (`enc-<id>`, the key the request published). The
+ * response-encryption keypair is fresh P-256 per transaction, as
+ * `direct_post.jwt` requires; the private JWK stays in the store for the
+ * response side's JWE decryption.
  */
 export interface Transaction {
 	readonly id: string;
@@ -240,8 +241,6 @@ export interface TransactionStore {
 	 * the nonce), and deletes it — a replayed `direct_post.jwt` finds nothing.
 	 */
 	takeForResponse(id: string): Transaction | null;
-	/** Looks up a live transaction by its `state` value. */
-	findByState(state: string): Transaction | null;
 }
 
 interface StoredTransaction {
@@ -295,15 +294,7 @@ export function createTransactionStore(ttlSeconds: number = TRANSACTION_TTL_SECO
 		return entry.transaction;
 	}
 
-	function findByState(state: string): Transaction | null {
-		sweep();
-		for (const entry of transactions.values()) {
-			if (entry.transaction.state === state) return entry.transaction;
-		}
-		return null;
-	}
-
-	return { begin, takeForRequest, takeForResponse, findByState };
+	return { begin, takeForRequest, takeForResponse };
 }
 
 // ——— Signed transaction references ——————————————————————————————————————————
@@ -311,8 +302,7 @@ export function createTransactionStore(ttlSeconds: number = TRANSACTION_TTL_SECO
 // The `request_uri` carries a signed reference to the transaction, not the
 // raw id: b64url(id) + '.' + b64url(hmac-sha256(key, b64url(id))). Pattern:
 // upact-oidc's signState/unsignState, with the expiry held by the store
-// instead of the token (the store must exist anyway for single-use and for
-// U3's state lookup).
+// instead of the token (the store must exist anyway to enforce single-use).
 
 /** Signs a transaction id into an opaque reference for the request_uri. */
 export function signTransactionRef(id: string, key: Buffer): string {
@@ -413,7 +403,7 @@ export function buildAuthorizationRequestPayload(
 export async function buildRequestObjectJwt(options: BuildRequestObjectOptions): Promise<string> {
 	const { cert } = options;
 
-	const result = await withInsecureUrls(options.allowInsecureUrls === true, () =>
+	const result = await withUrlValidation(options.allowInsecureUrls === true, () =>
 		createOpenid4vpAuthorizationRequest({
 			scheme: 'openid4vp://',
 			authorizationRequestPayload: buildAuthorizationRequestPayload(
@@ -478,18 +468,34 @@ function createEs256SignJwt(cert: AccessCertificate) {
 }
 
 /**
- * The wrapped library validates endpoint URLs as https-only via a module
- * global. For dev-mode (allowInsecureRequests) we relax it for the duration
- * of one call and restore it after, so a production adapter instance in the
- * same process never sees relaxed validation outside this window.
+ * Process-wide serialisation of the wrapped library's URL-validation window.
+ *
+ * The library reads `allowInsecureUrls` from a single shared module-global
+ * (`@openid4vc/utils` `GLOBAL_CONFIG`) at parse time. Mutating it around an
+ * awaited call is not safe under concurrency: a concurrent build in another
+ * adapter instance would observe this build's setting, and interleaved
+ * save/restore of overlapping calls could strand the global permanently
+ * relaxed. So every build — secure or dev-mode — runs inside this
+ * one-at-a-time critical section with the global set to exactly the value it
+ * needs and restored to its prior value after. No build ever observes another
+ * build's window, and the global cannot be left corrupted.
  */
-async function withInsecureUrls<T>(enabled: boolean, fn: () => Promise<T>): Promise<T> {
-	if (!enabled) return fn();
-	const previous = getGlobalConfig();
-	setGlobalConfig({ ...previous, allowInsecureUrls: true });
-	try {
-		return await fn();
-	} finally {
-		setGlobalConfig(previous);
-	}
+let urlValidationLock: Promise<unknown> = Promise.resolve();
+
+function withUrlValidation<T>(allowInsecureUrls: boolean, fn: () => Promise<T>): Promise<T> {
+	const run = urlValidationLock.then(async () => {
+		const previous = getGlobalConfig();
+		setGlobalConfig({ ...previous, allowInsecureUrls });
+		try {
+			return await fn();
+		} finally {
+			setGlobalConfig(previous);
+		}
+	});
+	// Keep the lock chain alive regardless of this build's success or failure.
+	urlValidationLock = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
 }

@@ -43,6 +43,20 @@ export const UNTRUSTED_ISSUER_KEY_PEM: string = readFileSync(
 	join(FIXTURES, 'untrusted-issuer.key.pem'),
 	'utf8',
 );
+/**
+ * An end-entity certificate signed by the NON-CA PID issuer leaf, used to
+ * probe RFC 5280 path validation: presenting it as an intermediate
+ * (`x5c = [forged sub-issuer, pid-issuer]`) must be rejected because the
+ * non-CA pid-issuer may not sign another certificate in the chain.
+ */
+export const FORGED_SUBISSUER_CERT_PEM: string = readFileSync(
+	join(FIXTURES, 'forged-subissuer.pem'),
+	'utf8',
+);
+export const FORGED_SUBISSUER_KEY_PEM: string = readFileSync(
+	join(FIXTURES, 'forged-subissuer.key.pem'),
+	'utf8',
+);
 /** The BMI sandbox mock trust list (see fixtures/README.md for provenance). */
 export const BMI_PID_PROVIDER_TRUSTLIST_JWT: string = readFileSync(
 	join(FIXTURES, 'bmi-pid-provider.trustlist.jwt'),
@@ -286,6 +300,17 @@ export interface WalletRunOptions {
 	credentialId?: string;
 	/** Override the JWE kid (default: the advertised one). null omits it. */
 	kid?: string | null;
+	/**
+	 * Transforms the compact SD-JWT VC presentation before it is packed into
+	 * the vp_token and encrypted. Receives the issued PID (so the caller can
+	 * derive a second presentation from the same credential) and the KB
+	 * context. Used to construct disclosure-splice / sd_hash tests.
+	 */
+	mutatePresentation?: (
+		presented: string,
+		pid: IssuedPid,
+		ctx: { kbAud: string; kbNonce: string },
+	) => string | Promise<string>;
 }
 
 export interface WalletRun {
@@ -318,15 +343,20 @@ export async function runWallet(adapter: EudiAdapter, options: WalletRunOptions 
 	const encryptionKey = requestPayload.client_metadata.jwks.keys[0] as JsonWebKey & { kid: string };
 
 	const pid = options.pid ?? (await issueTestPid(options.issue));
-	const presented = await presentTestPid(pid, {
+	const kbAud = options.kbAud ?? (requestPayload.client_id as string);
+	const kbNonce = options.kbNonce ?? (requestPayload.nonce as string);
+	let presented = await presentTestPid(pid, {
 		...(options.frame !== undefined ? { frame: options.frame } : {}),
-		kbAud: options.kbAud ?? (requestPayload.client_id as string),
-		kbNonce: options.kbNonce ?? (requestPayload.nonce as string),
+		kbAud,
+		kbNonce,
 		...(options.kbIat !== undefined ? { kbIat: options.kbIat } : {}),
 		...(options.tamperIssuerSignature !== undefined
 			? { tamperIssuerSignature: options.tamperIssuerSignature }
 			: {}),
 	});
+	if (options.mutatePresentation) {
+		presented = await options.mutatePresentation(presented, pid, { kbAud, kbNonce });
+	}
 
 	const jarmPayload = {
 		vp_token: { [options.credentialId ?? 'credential_0']: presented },

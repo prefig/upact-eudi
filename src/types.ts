@@ -79,8 +79,15 @@ export interface EudiConfig {
 	 */
 	declaredAttributes: readonly AttributeDeclaration[];
 	/**
-	 * The verifier identity presentations are addressed to (the relying
-	 * party's origin). Maps to the upact PresentationRequest `audience`.
+	 * The relying party's verifier identity (e.g. its origin). Validated
+	 * non-empty at construction as part of the registrable declaration.
+	 *
+	 * Note: this is not the audience the wallet cryptographically addresses a
+	 * presentation to. Under OpenID4VP the presentation audience is the
+	 * `client_id` (`x509_hash:...`, derived from the access certificate), and
+	 * the KB-JWT `aud` is verified against that client_id. This field is kept
+	 * for declaration/registration parity and is not itself enforced against
+	 * presentations.
 	 */
 	audience: string;
 	/**

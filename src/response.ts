@@ -206,15 +206,51 @@ function decodeJwsHeader(data: string, context: string): JwsParts {
 }
 
 /**
+ * Asserts that `issuer` is allowed to sign another certificate, per the RFC
+ * 5280 path constraints a relying party must apply to intermediate/anchor
+ * certificates: basicConstraints must assert CA:TRUE, and when a keyUsage
+ * extension is present it must include keyCertSign. (An absent keyUsage is
+ * unrestricted per RFC 5280 §4.2.1.3, so it is not treated as a failure.)
+ *
+ * Without this, a chain link is validated by signature alone, and any
+ * end-entity certificate a trust anchor ever issued (e.g. a leaf issued for
+ * a different purpose) could be used as an intermediate to sign a forged
+ * sub-chain and mint arbitrary issuers.
+ */
+function assertMayIssueCertificates(issuer: X509Certificate, role: string): void {
+	if (issuer.ca !== true) {
+		throw new TrustChainError(
+			`upact-eudi: ${role} '${issuer.subject}' is not a CA certificate ` +
+				`(basicConstraints CA:TRUE is required to sign a certificate in the chain)`,
+		);
+	}
+	const keyUsage = issuer.keyUsage;
+	if (Array.isArray(keyUsage) && keyUsage.length > 0 && !keyUsage.includes('keyCertSign')) {
+		throw new TrustChainError(
+			`upact-eudi: ${role} '${issuer.subject}' keyUsage does not permit keyCertSign; ` +
+				`it may not sign a certificate in the chain`,
+		);
+	}
+}
+
+/**
  * The issuer-signature verifier handed to the SD-JWT library, closing over
  * the parsed trust anchors. It enforces the x5c trust-chain policy the
  * German profile requires of a relying party:
  *
  * - the issuer JWT header carries an x5c chain, ES256-signed,
- * - the leaf certificate verifies the signature,
+ * - the leaf (end-entity) certificate verifies the JWT signature,
  * - every certificate is within its validity window,
- * - each link is signed by the next,
+ * - each link is signed by the next, and every issuing certificate (each
+ *   non-leaf link and the terminating anchor) satisfies the RFC 5280 CA path
+ *   constraints (basicConstraints CA:TRUE, keyUsage keyCertSign when present),
  * - the chain terminates at (or is signed by) a configured trust anchor.
+ *
+ * Not enforced (documented limits, not silent gaps): extended key usage (the
+ * German profile's PID-issuer EKU OID), basicConstraints pathLenConstraint,
+ * and name-constraint checking. A configured anchor is trusted to issue only
+ * PID-issuer certificates; if an anchor also issues certificates for other
+ * purposes, EKU checking would be needed to keep them out of this path.
  *
  * Chain-policy failures throw TrustChainError (→ `credential_rejected`);
  * a plain signature mismatch returns false (→ `credential_invalid` via the
@@ -263,6 +299,9 @@ export function createTrustChainVerifier(
 			}
 		}
 		for (let i = 0; i < chain.length - 1; i++) {
+			// chain[i+1] is the issuer of chain[i]; it must be a CA permitted to
+			// sign certificates, not merely a certificate whose key verifies.
+			assertMayIssueCertificates(chain[i + 1], `issuer chain link ${i + 1}`);
 			if (!chain[i].verify(chain[i + 1].publicKey)) {
 				throw new TrustChainError(
 					`upact-eudi: issuer chain link ${i} is not signed by its successor certificate`,
@@ -270,10 +309,13 @@ export function createTrustChainVerifier(
 			}
 		}
 		const last = chain[chain.length - 1];
-		const terminates = anchors.some(
-			(anchor) =>
-				last.raw.equals(anchor.raw) || (last.issuer === anchor.subject && last.verify(anchor.publicKey)),
-		);
+		const terminates = anchors.some((anchor) => {
+			if (last.raw.equals(anchor.raw)) return true;
+			if (last.issuer !== anchor.subject || !last.verify(anchor.publicKey)) return false;
+			// The anchor issued `last`; it must itself be a CA permitted to sign.
+			assertMayIssueCertificates(anchor, 'configured trust anchor');
+			return true;
+		});
 		if (!terminates) {
 			throw new TrustChainError(
 				`upact-eudi: issuer chain does not terminate at a configured trust anchor ` +

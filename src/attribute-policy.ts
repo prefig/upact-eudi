@@ -27,7 +27,29 @@ import type { AttributeDeclaration, ClaimPath, EudiConfig } from './types.js';
  * registry extends when concrete consumers surface, mirroring upact's
  * capability-vocabulary discipline (SPEC §5.1).
  */
-export const KNOWN_CREDENTIAL_TYPES: ReadonlySet<string> = new Set([
+/**
+ * Builds a genuinely immutable Set: the mutating methods throw, so the
+ * `ReadonlySet` type annotation is enforced at runtime and not merely at
+ * compile time. Any in-process `.add()`/`.delete()`/`.clear()` on the
+ * exported registry throws rather than silently widening the credential-type
+ * guard.
+ */
+function freezeReadonlySet<T>(values: readonly T[]): ReadonlySet<T> {
+	const set = new Set(values);
+	const block = (): never => {
+		throw new TypeError(
+			'upact-eudi: KNOWN_CREDENTIAL_TYPES is an immutable registry and cannot be mutated at runtime',
+		);
+	};
+	Object.defineProperties(set, {
+		add: { value: block, writable: false, configurable: false },
+		delete: { value: block, writable: false, configurable: false },
+		clear: { value: block, writable: false, configurable: false },
+	});
+	return Object.freeze(set) as ReadonlySet<T>;
+}
+
+export const KNOWN_CREDENTIAL_TYPES: ReadonlySet<string> = freezeReadonlySet([
 	'urn:eudi:pid:de:1',
 ]);
 
@@ -75,7 +97,15 @@ export const ALLOWED_CLAIM_PATHS: readonly ClaimPath[] = Object.freeze([
  * DCQL builder in U2, the claims mapper in U3) reads this and only this.
  */
 export interface AttributePolicy {
-	/** The verifier identity presentations are addressed to. */
+	/**
+	 * The relying party's configured verifier identity, validated non-empty at
+	 * construction (part of the registrable declaration). Note: the audience a
+	 * wallet actually addresses a presentation to is the OpenID4VP `client_id`
+	 * (`x509_hash:...`, derived from the access certificate), and the KB-JWT
+	 * `aud` is checked against that client_id, not against this string. This
+	 * field is retained for declaration/registration parity; it is not itself
+	 * the enforced presentation audience.
+	 */
 	readonly audience: string;
 	/** The declared credentials, deep-frozen copies of the config input. */
 	readonly declarations: readonly Readonly<AttributeDeclaration>[];
@@ -121,31 +151,57 @@ function validateClaimPath(path: ClaimPath, vct: string): void {
 	}
 }
 
-function validateDeclaration(declaration: AttributeDeclaration): void {
-	if (declaration.format !== 'dc+sd-jwt') {
+/**
+ * Validates one declaration and returns its deep-frozen copy in a single
+ * pass. Every config property is read exactly once into a local, and both
+ * validation and the frozen artifact are built from that captured value, so a
+ * getter- or Proxy-backed config cannot vary a value between the validation
+ * read and the freeze-copy read (a TOCTOU that would otherwise let a benign
+ * value pass validation while a forbidden value lands in the frozen policy).
+ */
+function freezeDeclaration(input: AttributeDeclaration): Readonly<AttributeDeclaration> {
+	// Capture each property once; never re-read `input` after this point.
+	const format = input.format;
+	const vct = input.vct;
+	const claimsInput = input.claims;
+
+	if (format !== 'dc+sd-jwt') {
 		throw new Error(
-			`upact attribute policy: unsupported credential format '${String(declaration.format)}'. ` +
+			`upact attribute policy: unsupported credential format '${String(format)}'. ` +
 				`v0.1 supports 'dc+sd-jwt' (SD-JWT VC) only; mdoc is deferred.`,
 		);
 	}
-	if (typeof declaration.vct !== 'string' || declaration.vct.length === 0) {
+	if (typeof vct !== 'string' || vct.length === 0) {
 		throw new Error(`upact attribute policy: declaration is missing a credential type (vct).`);
 	}
-	if (!KNOWN_CREDENTIAL_TYPES.has(declaration.vct)) {
+	if (!KNOWN_CREDENTIAL_TYPES.has(vct)) {
 		throw new Error(
-			`upact attribute policy: unknown credential type '${declaration.vct}'. ` +
+			`upact attribute policy: unknown credential type '${vct}'. ` +
 				`Known types: ${[...KNOWN_CREDENTIAL_TYPES].join(', ')}.`,
 		);
 	}
-	if (!Array.isArray(declaration.claims)) {
+	if (!Array.isArray(claimsInput)) {
 		throw new Error(
-			`upact attribute policy: declaration for '${declaration.vct}' has no claims array. ` +
+			`upact attribute policy: declaration for '${vct}' has no claims array. ` +
 				`Use an empty array for a possession-only declaration.`,
 		);
 	}
-	for (const path of declaration.claims) {
-		validateClaimPath(path, declaration.vct);
+
+	// Dense own-property snapshot: read each claim path once, validate the
+	// captured snapshot, and freeze the same snapshot. Skipping non-own
+	// indices also means prototype-pollution of a sparse hole cannot inject an
+	// undeclared path.
+	const claims: ClaimPath[] = [];
+	for (let i = 0; i < claimsInput.length; i++) {
+		if (!Object.prototype.hasOwnProperty.call(claimsInput, i)) continue;
+		const rawPath = claimsInput[i];
+		const path: ClaimPath = Array.isArray(rawPath)
+			? rawPath.map((segment) => segment)
+			: (rawPath as ClaimPath);
+		validateClaimPath(path, vct);
+		claims.push(Object.freeze(path));
 	}
+	return Object.freeze({ format, vct, claims: Object.freeze(claims) });
 }
 
 /**
@@ -153,19 +209,23 @@ function validateDeclaration(declaration: AttributeDeclaration): void {
  *
  * Called at adapter construction time, before any network request. Throws a
  * descriptive error naming the offending path and the SPEC clause on any
- * undeclarable input. The returned policy is a frozen copy: later mutation
- * of the caller's config object cannot reach it.
+ * undeclarable input. The returned policy is a frozen copy built from a
+ * single read of each config property (see `freezeDeclaration`): later
+ * mutation, accessor tricks, or prototype pollution of the caller's config
+ * object cannot reach it.
  */
 export function freezeAttributePolicy(
 	config: Pick<EudiConfig, 'declaredAttributes' | 'audience'>,
 ): AttributePolicy {
-	if (typeof config.audience !== 'string' || config.audience.length === 0) {
+	const audience = config.audience;
+	if (typeof audience !== 'string' || audience.length === 0) {
 		throw new Error(
 			`upact attribute policy: 'audience' must be a non-empty string (the verifier ` +
 				`identity presentations are addressed to, e.g. the relying party's origin).`,
 		);
 	}
-	if (!Array.isArray(config.declaredAttributes) || config.declaredAttributes.length === 0) {
+	const declaredInput = config.declaredAttributes;
+	if (!Array.isArray(declaredInput) || declaredInput.length === 0) {
 		throw new Error(
 			`upact attribute policy: 'declaredAttributes' declares no credentials. ` +
 				`A relying party without a declared attribute list has nothing it may request ` +
@@ -173,24 +233,23 @@ export function freezeAttributePolicy(
 				`possession-only if no claims are needed.`,
 		);
 	}
-	const declared: readonly AttributeDeclaration[] = config.declaredAttributes;
-	for (const declaration of declared) {
-		validateDeclaration(declaration);
+	// Dense own-property snapshot, validated and frozen in one pass — no
+	// second read of the caller's array, so accessors and prototype-pollution
+	// of sparse holes cannot inject a declaration the validator never saw.
+	const declarations: Readonly<AttributeDeclaration>[] = [];
+	for (let index = 0; index < declaredInput.length; index++) {
+		if (!Object.prototype.hasOwnProperty.call(declaredInput, index)) continue;
+		declarations.push(freezeDeclaration(declaredInput[index]));
 	}
-	// Deep-frozen copy — the caller's config stays untouched, and no later
-	// mutation of it can reach the policy the DCQL builder reads.
-	const declarations = Object.freeze(
-		declared.map((declaration) =>
-			Object.freeze({
-				format: declaration.format,
-				vct: declaration.vct,
-				claims: Object.freeze(
-					declaration.claims.map((path) => Object.freeze([...path])),
-				),
-			}),
-		),
-	);
-	return Object.freeze({ audience: config.audience, declarations });
+	if (declarations.length === 0) {
+		throw new Error(
+			`upact attribute policy: 'declaredAttributes' declares no credentials. ` +
+				`A relying party without a declared attribute list has nothing it may request ` +
+				`(CIR (EU) 2025/848 Art. 5(1)); declare at least one credential type, ` +
+				`possession-only if no claims are needed.`,
+		);
+	}
+	return Object.freeze({ audience, declarations: Object.freeze(declarations) });
 }
 
 /**

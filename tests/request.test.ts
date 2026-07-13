@@ -17,9 +17,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { calculateX509HashClientIdPrefixValue } from '@openid4vc/openid4vp';
+import { getGlobalConfig } from '@openid4vc/utils';
 import { createEudiAdapter, buildDcqlQuery, freezeAttributePolicy } from '../src/index.js';
 import type { EudiConfig } from '../src/index.js';
-import { loadAccessCertificate } from '../src/request.js';
+import { createTransactionStore, loadAccessCertificate } from '../src/request.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const ACCESS_CERTIFICATE = readFileSync(join(FIXTURES, 'access-certificate.pem'), 'utf8');
@@ -431,6 +432,70 @@ describe('handleRequestUri', () => {
 		expect(response.status).toBe(200);
 		const { payload } = decodeJwt(await response.text());
 		expect(payload.response_uri).toBe('http://localhost:8080/oid4vp/response');
+	});
+});
+
+// ——— Transaction store surface ———————————————————————————————————————————————
+
+describe('createTransactionStore', () => {
+	it('response matching is by kid; there is no findByState surface', () => {
+		const store = createTransactionStore();
+		expect('findByState' in store).toBe(false);
+		expect((store as Record<string, unknown>).findByState).toBeUndefined();
+	});
+
+	it('a dereferenced transaction is consumable once for a response', () => {
+		const store = createTransactionStore();
+		const tx = store.begin();
+		expect(store.takeForResponse(tx.id)).toBeNull(); // request not yet served
+		expect(store.takeForRequest(tx.id)).toBe(tx);
+		expect(store.takeForResponse(tx.id)).toBe(tx);
+		expect(store.takeForResponse(tx.id)).toBeNull(); // single-use
+	});
+});
+
+// ——— Concurrent URL-validation window ————————————————————————————————————————
+
+describe('URL validation under concurrency', () => {
+	async function buildPayload(
+		adapter: ReturnType<typeof createEudiAdapter>,
+	): Promise<Record<string, unknown>> {
+		const deeplink = await adapter.buildPresentationDeeplink();
+		const response = await adapter.handleRequestUri(
+			new Request(deeplink.searchParams.get('request_uri')!, { method: 'GET' }),
+		);
+		expect(response.status).toBe(200);
+		return decodeJwt(await response.text()).payload;
+	}
+
+	it('overlapping dev-mode builds leave the shared global restored, not stranded relaxed', async () => {
+		const insecure = createEudiAdapter(
+			makeConfig({
+				endpoints: { baseUrl: 'http://localhost:8080/oid4vp' },
+				allowInsecureRequests: true,
+			}),
+		);
+		await Promise.all(Array.from({ length: 6 }, () => buildPayload(insecure)));
+		expect(getGlobalConfig().allowInsecureUrls).toBe(false);
+	});
+
+	it('a secure build concurrent with dev-mode builds keeps https and does not see the relaxed window', async () => {
+		const secure = createEudiAdapter(makeConfig());
+		const insecure = createEudiAdapter(
+			makeConfig({
+				endpoints: { baseUrl: 'http://localhost:8080/oid4vp' },
+				allowInsecureRequests: true,
+			}),
+		);
+		const [a, b, c] = await Promise.all([
+			buildPayload(insecure),
+			buildPayload(secure),
+			buildPayload(insecure),
+		]);
+		expect((a.response_uri as string).startsWith('http://')).toBe(true);
+		expect((b.response_uri as string).startsWith('https://')).toBe(true);
+		expect((c.response_uri as string).startsWith('http://')).toBe(true);
+		expect(getGlobalConfig().allowInsecureUrls).toBe(false);
 	});
 });
 

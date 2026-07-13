@@ -11,19 +11,27 @@ import { createServer, type Server } from 'node:http';
 import { StatusList, createHeaderAndPayload } from '@owf/token-status-list';
 import { PID_ISSUER_CERT_PEM, PID_ISSUER_KEY_PEM, TEST_ISSUER_URL, pemBodyBase64 } from './wallet.js';
 
+/** Overrides for the status list JWT signer (defaults: the trusted PID issuer). */
+export interface StatusListSignerOptions {
+	/** Signing key PEM. Default: the trusted test PID issuer key. */
+	issuerKeyPem?: string;
+	/** x5c chain (base64 DER). Default: [trusted test PID issuer cert]. */
+	x5c?: string[];
+}
+
 /** Builds a statuslist+jwt with the given per-index statuses (1 bit each). */
-export function buildStatusListJwt(statuses: number[]): string {
+export function buildStatusListJwt(statuses: number[], signer: StatusListSignerOptions = {}): string {
 	const list = new StatusList(statuses, 1);
 	const now = Math.floor(Date.now() / 1000);
 	const { header, payload } = createHeaderAndPayload(
 		list,
 		{ iss: TEST_ISSUER_URL, sub: `${TEST_ISSUER_URL}/status/1`, iat: now, exp: now + 3600 },
-		{ alg: 'ES256', typ: 'statuslist+jwt', x5c: [pemBodyBase64(PID_ISSUER_CERT_PEM)] },
+		{ alg: 'ES256', typ: 'statuslist+jwt', x5c: signer.x5c ?? [pemBodyBase64(PID_ISSUER_CERT_PEM)] },
 	);
 	const encode = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString('base64url');
 	const signingInput = `${encode(header)}.${encode(payload)}`;
 	const signature = signPayload('sha256', Buffer.from(signingInput), {
-		key: createPrivateKey(PID_ISSUER_KEY_PEM),
+		key: createPrivateKey(signer.issuerKeyPem ?? PID_ISSUER_KEY_PEM),
 		dsaEncoding: 'ieee-p1363',
 	});
 	return `${signingInput}.${signature.toString('base64url')}`;

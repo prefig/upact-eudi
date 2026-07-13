@@ -461,4 +461,9 @@ describe('createEudiAdapter — back-channel closure conformance (16 vectors)', 
 		const { adapter } = makeAdapter();
 		expect((adapter as Record<string, unknown>)._config).toBeUndefined();
 	});
+
+	it('(adapter as any).client is undefined (the SPEC §7.5-named property, parity with siblings)', () => {
+		const { adapter } = makeAdapter();
+		expect((adapter as Record<string, unknown>).client).toBeUndefined();
+	});
 });

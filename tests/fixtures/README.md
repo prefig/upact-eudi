@@ -36,6 +36,11 @@ sandbox issuer keys are (correctly) not available to us.
   the test root CA. Signs SD-JWT VCs and status list JWTs in tests.
 - `untrusted-issuer.pem` / `untrusted-issuer.key.pem` — a self-signed
   issuer chaining to nothing, for the issuer-not-on-trust-list tests.
+- `forged-subissuer.pem` / `forged-subissuer.key.pem` — an end-entity
+  certificate signed by the NON-CA `pid-issuer` leaf. Presenting it as an
+  intermediate (`x5c = [forged sub-issuer, pid-issuer]`) must be rejected:
+  `pid-issuer` is `CA:FALSE`, so it may not sign another certificate in the
+  chain (RFC 5280 path validation regression test).
 
 Regenerate with:
 
@@ -61,6 +66,14 @@ openssl ecparam -name prime256v1 -genkey -noout \
 openssl req -new -x509 -key untrusted-issuer.key.pem \
   -subj "/CN=upact-eudi TEST untrusted issuer (locally generated)/O=upact-eudi tests" \
   -days 7300 -sha256 -out untrusted-issuer.pem
+openssl ecparam -name prime256v1 -genkey -noout \
+  | openssl pkcs8 -topk8 -nocrypt -out forged-subissuer.key.pem
+openssl req -new -key forged-subissuer.key.pem \
+  -subj "/CN=upact-eudi TEST forged sub-issuer (signed by the non-CA leaf)/O=upact-eudi tests" \
+  -out forged-subissuer.csr
+openssl x509 -req -in forged-subissuer.csr -CA pid-issuer.pem -CAkey pid-issuer.key.pem \
+  -CAcreateserial -days 7300 -sha256 -out forged-subissuer.pem
+rm forged-subissuer.csr pid-issuer.srl
 ```
 
 ## Erica harness TLS (U5)
