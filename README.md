@@ -1,6 +1,6 @@
 # @prefig/upact-eudi
 
-EUDI wallet relying-party adapter for [upact](https://github.com/prefig/upact). Presents the German EUDI wallet (and any HAIP-conforming wallet) to an application as an upact `IdentityPort`: the application asks whether this person holds a valid PID and meets the predicates it declared, and receives an opaque, one-shot `Upactor` with the privacy minima the port guarantees. OpenID4VP 1.0 verifier flow, SD-JWT VC (German PID), same-device.
+EUDI relying-party adapter for [upact](https://github.com/prefig/upact). Presents the German EUDI wallet (and any HAIP-conforming wallet) to an application as an upact `IdentityPort`: the application asks whether this person holds a valid PID and meets the predicates it declared, and receives an opaque, one-shot `Upactor` with the privacy minima the port guarantees. OpenID4VP 1.0 verifier flow, SD-JWT VC (German PID), same-device.
 
 ## The declared list is the registered list
 
@@ -16,32 +16,29 @@ createEudiAdapter({ ...config, declaredAttributes: [
 //   declared for 'urn:eudi:pid:de:1' is forbidden: date-of-birth field (SPEC §7.1). ..."
 ```
 
-## What this package does not do
+## Scope and limits
 
-This list ships with every claim above.
+These boundaries ship with every claim above.
 
-- It does not register you. Registration is an administrative act with the Member State registrar; the adapter has no role in it.
-- It does not provide access or registration certificates (CIR Arts. 7 and 8). Both are constructor inputs you obtain from the registrar (or, in dev mode, from Erica's fake keys and the published mock trust lists).
-- It does not make your application "compliant." It makes one class of violation (requesting or consuming beyond the declared surface) structurally impossible on the code paths that use the port, and it produces evidence (`CONFORMANCE.md`, the test suites). Code that bypasses the port remains a code-review concern.
-- It is sandbox software, not production software. Verified end-to-end against the Erica wallet simulator and mock trust lists; testing against the real wallet in the BMI sandbox is the true check, and production certificate handling is not yet documented by the ecosystem.
+- Registration is an administrative act with your Member State registrar; the adapter has no role in it.
+- Access and registration certificates (CIR Arts. 7 and 8) are constructor inputs you obtain from the registrar (or, in dev mode, from Erica's fake keys and the published mock trust lists).
+- Compliance stays your responsibility. The adapter makes one class of violation (requesting or consuming beyond the declared surface) structurally impossible on the code paths that use the port, and it produces evidence (`CONFORMANCE.md`, the test suites). Code that bypasses the port remains a code-review concern.
+- This is sandbox-stage software. It is verified end-to-end against the Erica wallet simulator and mock trust lists; testing against the real wallet in the BMI sandbox is the next check, and the ecosystem has yet to document production certificate handling.
 - mdoc verification and the cross-device flow are deferred: mdoc lands when a consumer needs it, cross-device when the relying-party guide specifies it.
-- It does not give you a returning user. One wallet can mint many identities; one-proof-one-membership is not enforceable at this layer (see "Identity is one-shot" below).
-- It does not branch on predicate values. A declared predicate is a requirement; "admit everyone, then branch on `age_over_65`" would need a port extension that lands when a concrete consumer surfaces.
+- Recognising a returning holder is the application's work. One wallet can mint many identities; one-proof-one-membership is unenforceable at this layer (see "Identity is one-shot" below).
+- A declared predicate is a requirement, and the only kind of predicate there is. "Admit everyone, then branch on `age_over_65`" would need a port extension, which lands when a concrete consumer surfaces.
 
-## Install (local)
-
-This package consumes `@prefig/upact` (npm) and wraps `@openid4vc/openid4vp` + `@sd-jwt/sd-jwt-vc` (peer dependencies; see `docs/decisions.md` D1 for why not Credo).
+## Install
 
 ```
-npm install
-npm run build             # tsc -> dist/
-npm test                  # vitest: policy, request, response, claims mapper (149 tests)
-npm run test:integration  # end-to-end against a locally running Erica (docs/erica-setup.md)
+npm install @prefig/upact-eudi @prefig/upact @openid4vc/openid4vp @openid4vc/utils @sd-jwt/sd-jwt-vc
 ```
+
+`@prefig/upact`, `@openid4vc/openid4vp`, `@openid4vc/utils`, and `@sd-jwt/sd-jwt-vc` are peer dependencies (`docs/decisions.md` D1 records the library choice).
 
 ## Usage
 
-The application owns the HTTP surface; the adapter exposes handlers and values (pattern: upact-oidc). Four wiring points:
+The application owns the HTTP surface; the adapter exposes handlers and values (the same shape as upact-oidc). Four wiring points:
 
 ```typescript
 import { createEudiAdapter } from '@prefig/upact-eudi';
@@ -90,7 +87,7 @@ A successful `authenticate()` attests every declared predicate: a presentation t
 
 `Upactor.id` is derived per authentication (from the single-use transaction nonce plus each presentation's issuer and KB-JWT `sd_hash`). Equal ids mean the same `authenticate()` call; ids never repeat, so the adapter gives the application no way to recognise a returning holder. German PIDs disclose no stable identifier under a predicate-only declaration, and the plausible-looking alternative (deriving from the `sd_hash`) turns out to be accidentally linkable across visits whenever a wallet re-presents a stored credential. `docs/identity-stability.md` records the evidence and the options weighed.
 
-Deployments that need a persistent member pair at the application level: the EUDI presentation proves eligibility once, and the application issues its own credential (an invitation, a membership, an [ember](../ember) scope credential). The adapter supports exactly that shape: one gate crossing, handed over once through `redeemResponseCode`.
+Deployments that need a persistent member pair at the application level: the EUDI presentation proves eligibility once, and the application issues its own credential (an invitation, a membership, an [ember](https://github.com/prefig/ember) scope credential). The adapter supports exactly that shape: one gate crossing, handed over once through `redeemResponseCode`.
 
 ## Where EUDI evidence belongs in an application
 
@@ -100,7 +97,7 @@ The reason is who a state-ID door turns away: non-EU residents, people without a
 
 ## Field mapping (OpenID4VP)
 
-[upact-ember](../upact-ember) named its bespoke presentation fields onto OpenID4VP so a future adapter would be a shim rather than a redesign; this adapter is that lineage on the real wire format. The table extends upact-ember's:
+[upact-ember](https://github.com/prefig/upact-ember) named its bespoke presentation fields onto OpenID4VP so that this adapter could be a shim rather than a redesign. The table extends upact-ember's onto the real wire format:
 
 | upact / adapter surface | OpenID4VP 1.0 / HAIP wire | Role |
 | --- | --- | --- |
@@ -116,7 +113,7 @@ The reason is who a state-ID door turns away: non-EU residents, people without a
 
 ## Testing
 
-`npm test` runs the unit suites (149 tests), including a spec-correct SD-JWT VC wallet simulator (`tests/helpers/wallet.ts`) that exercises the full pipeline without external processes, and the sixteen-vector back-channel closure suite (SPEC §7.5).
+`npm test` runs the unit suites (170 tests), including a spec-correct SD-JWT VC wallet simulator (`tests/helpers/wallet.ts`) that exercises the full pipeline without external processes, and the sixteen-vector back-channel closure suite (SPEC §7.5).
 
 `npm run test:integration` drives the whole same-device flow against Erica, the BMI's wallet simulator and HAIP validation tool, running locally: deeplink, request dereference over real HTTPS, Erica's HAIP profile validation, a real encrypted presentation, `authenticate()`, `Upactor`. Setup steps in `docs/erica-setup.md`; recorded validation output in `tests/integration/evidence/`. `CONFORMANCE.md` pins the Erica commit and the developer-guide version consulted.
 
