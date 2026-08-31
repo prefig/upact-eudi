@@ -230,3 +230,18 @@ the evidence: docs/identity-stability.md (supersedes D3's interim
   PredicateNotSatisfiedError, normalised to `credential_rejected`. A
   successful authenticate() attests every declared predicate; no boolean
   rides on the Upactor (SPEC §7.2).
+
+## D6. 2026-08-31: per-instance session boxes supersede `createSession`/`_unwrapSession`
+
+upact v0.2 replaced the global `createSession` / `_unwrapSession` pair (and
+its process-local WeakMap) with `createSessionBox` from
+`@prefig/upact/internal`: one box per adapter instance, created in the
+factory closure. Earlier entries above describe the old mechanism as it was
+at the time and are left unchanged. The practical consequence for this
+adapter: a Session sealed by one instance is foreign to every other
+instance, so `respondToWallet` on a different instance now takes the 400
+`session was not produced by this adapter` path — which that message always
+claimed, and is now literally true per instance — and `invalidate` on a
+different instance is a no-op. This sharpens D2's instance-binding: the
+session, like the transaction, is bound to the adapter instance that
+produced it.

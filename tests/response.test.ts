@@ -649,6 +649,29 @@ describe('credential shape and envelope', () => {
 		expect(((await unavailable.json()) as { error: string }).error).toBe('temporarily_unavailable');
 	});
 
+	it('cross-instance opacity: a second adapter instance treats the first\'s Session as foreign', async () => {
+		// Per-instance session boxes (upact v0.2): a Session sealed by
+		// instance A cannot be unsealed by instance B. B's respondToWallet
+		// takes the 400 path, B's invalidate no-ops, and A's wallet-follow
+		// flow is untouched.
+		const adapterA = makeAdapter();
+		const adapterB = makeAdapter();
+		const { request } = await runWallet(adapterA);
+		const session = await expectSession(await adapterA.authenticate({ kind: 'eudi-response', request }));
+
+		const foreign = adapterB.respondToWallet(session);
+		expect(foreign.status).toBe(400);
+		const body = (await foreign.json()) as { error: string; error_description: string };
+		expect(body.error).toBe('invalid_request');
+		expect(body.error_description).toBe('session was not produced by this adapter');
+
+		// B.invalidate cannot reach A's response code either.
+		await adapterB.invalidate(session);
+		const ok = (await adapterA.respondToWallet(session).json()) as { redirect_uri: string };
+		const code = new URL(ok.redirect_uri).searchParams.get('response_code')!;
+		expect(await adapterA.redeemResponseCode(code)).not.toBeNull();
+	});
+
 	it('currentUpactor stays null (session binding is the application via redeemResponseCode)', async () => {
 		const adapter = makeAdapter();
 		expect(await adapter.currentUpactor(new Request('https://rp.example/'))).toBeNull();
