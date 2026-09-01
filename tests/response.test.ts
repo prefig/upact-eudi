@@ -650,8 +650,8 @@ describe('credential shape and envelope', () => {
 	});
 
 	it('cross-instance opacity: a second adapter instance treats the first\'s Session as foreign', async () => {
-		// Per-instance session boxes (upact v0.2): a Session sealed by
-		// instance A cannot be unsealed by instance B. B's respondToWallet
+		// Per-instance session state (upact v0.3): a Session created by
+		// instance A is unknown to instance B's WeakMap. B's respondToWallet
 		// takes the 400 path, B's invalidate no-ops, and A's wallet-follow
 		// flow is untouched.
 		const adapterA = makeAdapter();

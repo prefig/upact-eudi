@@ -16,7 +16,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { AuthError, IdentityPort, Session, Upactor } from '@prefig/upact';
-import { createSessionBox } from '@prefig/upact/internal';
+import { createOpaqueSession } from '@prefig/upact/internal';
 import { freezeAttributePolicy } from './attribute-policy.js';
 import { mapPresentationsToUpactor } from './claims-mapper.js';
 import {
@@ -76,7 +76,7 @@ const DEFAULT_FINISH_PATH = '/finish';
 /** Lifetime of a wallet-follow response code (seconds). */
 export const RESPONSE_CODE_TTL_SECONDS: number = 5 * 60;
 
-/** What a Session opaquely holds (recovered only via the instance's box.unseal). */
+/** What a Session opaquely holds (recovered only via the instance's sessions map). */
 interface EudiSessionData {
 	upactor: Upactor;
 	redirectUri: string;
@@ -128,10 +128,10 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 	const transactionKey = randomBytes(32);
 	const transactions = createTransactionStore();
 
-	// One session box per adapter instance: only sessions sealed by this
-	// instance can be unsealed here. A Session handed to another instance's
+	// One session map per adapter instance: only sessions created by this
+	// instance are keys here. A Session handed to another instance's
 	// respondToWallet is foreign and takes the 400 path (SPEC §7.4).
-	const box = createSessionBox<EudiSessionData>();
+	const sessions = new WeakMap<Session, EudiSessionData>();
 
 	// Wallet-follow response codes: single-use, short-lived, holding only
 	// the mapped Upactor (never substrate material). Swept on access.
@@ -174,7 +174,9 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 			const redirectUri = `${finishUri}?response_code=${responseCode}`;
 
 			const sessionData: EudiSessionData = { upactor, redirectUri, responseCode };
-			return box.seal(sessionData);
+			const session = createOpaqueSession();
+			sessions.set(session, sessionData);
+			return session;
 		} catch (err) {
 			return normaliseEudiError(err);
 		}
@@ -189,7 +191,7 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 	}
 
 	async function invalidate(session: Session): Promise<void> {
-		const data = box.unseal(session);
+		const data = sessions.get(session);
 		if (data !== undefined) {
 			responseCodes.delete(data.responseCode);
 		}
@@ -271,7 +273,7 @@ export function createEudiAdapter(config: EudiConfig): IdentityPort & EudiAdapte
 				error_description: outcome.message,
 			});
 		}
-		const data = box.unseal(outcome);
+		const data = sessions.get(outcome);
 		if (data === undefined) {
 			return jsonResponse(400, {
 				error: 'invalid_request',

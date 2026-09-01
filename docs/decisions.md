@@ -245,3 +245,18 @@ claimed, and is now literally true per instance — and `invalidate` on a
 different instance is a no-op. This sharpens D2's instance-binding: the
 session, like the transaction, is bound to the adapter instance that
 produced it.
+
+## D7. 2026-09-01: adapter-owned session state supersedes the session box
+
+upact v0.3 removed `createSessionBox`; core now exports only
+`createOpaqueSession` from `@prefig/upact/internal`, which constructs the
+hardened opaque marker and stores nothing. The value-to-session
+association is the adapter's own business: this adapter holds a
+`WeakMap<Session, EudiSessionData>` in the factory closure, sets it where
+it used to seal, and reads it where it used to unseal. Behaviour is
+unchanged: `WeakMap.get` returns undefined for foreign, fabricated, or
+cloned sessions, so a Session created by one instance is still foreign to
+every other instance, `respondToWallet` on a different instance still
+takes the 400 path, and `invalidate` on a different instance is still a
+no-op. Earlier entries above describe the old mechanisms as they were at
+the time and are left unchanged.

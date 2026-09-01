@@ -1,8 +1,8 @@
 # Conformance: @prefig/upact-eudi
 
-**Spec version:** upact v0.2
-**Package version:** 0.2.0
-**Date:** 2026-07-13
+**Spec version:** upact v0.3
+**Package version:** 0.3.0
+**Date:** 2026-09-01
 
 ## Substrate
 
@@ -55,7 +55,7 @@ Every `Upactor` returned by this adapter carries:
 
 ## Session opacity (SPEC §7.4)
 
-This adapter uses `createSessionBox` from `@prefig/upact/internal` for Session construction: one box is created per adapter instance inside the factory closure, and only that instance can unseal the Sessions it seals. The Session opaquely holds the mapped `Upactor`, the wallet-follow `redirect_uri`, and the single-use `response_code`; none of these, and no substrate material, is reachable except via `box.unseal` inside the adapter. A Session handed to a different instance's `respondToWallet` is foreign and takes the 400 `session was not produced by this adapter` path. `invalidate` revokes the unredeemed response code held in closure; there is nothing wallet-side to revoke.
+This adapter obtains every Session from `createOpaqueSession` in `@prefig/upact/internal` (the hardened opaque marker, constructed and audited in core) and keeps the session-to-state association in a `WeakMap<Session, EudiSessionData>` held in the factory closure, one map per adapter instance. The Session's associated state is the mapped `Upactor`, the wallet-follow `redirect_uri`, and the single-use `response_code`; none of these, and no substrate material, is reachable except via the closure-held map inside the adapter. A Session handed to a different instance's `respondToWallet` is not a key in that instance's map (`WeakMap.get` returns undefined for foreign, fabricated, or cloned sessions) and takes the 400 `session was not produced by this adapter` path. `invalidate` revokes the unredeemed response code held in closure; there is nothing wallet-side to revoke.
 
 ## Adapter back-channel closure (SPEC §7.5)
 
